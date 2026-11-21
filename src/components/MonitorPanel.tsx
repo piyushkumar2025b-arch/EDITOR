@@ -1,10 +1,12 @@
 import React, { useRef, useState } from 'react';
 import {
+  Camera,
   ChevronFirst,
   ChevronLast,
   ChevronLeft,
   ChevronRight,
   Clapperboard,
+  Columns2,
   Move,
   Pause,
   Play,
@@ -13,6 +15,7 @@ import {
   SplitSquareHorizontal,
   Volume2,
   VolumeX,
+  X,
 } from 'lucide-react';
 import { secondsToTimecode } from '../engine/timecode';
 import {
@@ -49,6 +52,13 @@ interface MonitorPanelProps {
   onChangeAspectRatio: (ratio: SequenceAspectPreset) => void;
   onToggleCinemaBars: () => void;
   onUpdateClipTransform?: (clipId: string, patch: Partial<ClipTransform>) => void;
+  showCompare?: boolean;
+  compareSplit?: number;
+  onToggleCompare?: () => void;
+  onChangeCompareSplit?: (split: number) => void;
+  onInsertSourcePush?: () => void;
+  onCaptureFrame?: () => void;
+  onClearInOut?: () => void;
 }
 
 export const MonitorPanel: React.FC<MonitorPanelProps> = ({
@@ -77,6 +87,13 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
   onChangeAspectRatio,
   onToggleCinemaBars,
   onUpdateClipTransform,
+  showCompare = false,
+  compareSplit = 0.5,
+  onToggleCompare,
+  onChangeCompareSplit,
+  onInsertSourcePush,
+  onCaptureFrame,
+  onClearInOut,
 }) => {
   const [zoom, setZoom] = useState<'fit' | '50' | '100'>('fit');
   const [transformMode, setTransformMode] = useState(false);
@@ -246,6 +263,23 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
             <span>Cinema Bars</span>
           </button>
 
+          {onToggleCompare && (
+            <button
+              type="button"
+              onClick={onToggleCompare}
+              aria-pressed={showCompare}
+              title="Before / After Color & Effects Split Comparison (`)"
+              className={`flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded border cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
+                showCompare
+                  ? 'bg-[#252A34] border-[#3B82F6]/60 text-white'
+                  : 'bg-[#1B1D23] border-[#292D36] text-[#9CA3AF] hover:text-white'
+              }`}
+            >
+              <Columns2 className="w-3 h-3" />
+              <span>Compare</span>
+            </button>
+          )}
+
           {allowDualMonitor && (
             <button
               type="button"
@@ -285,13 +319,26 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
                 Clip: {sourceAsset ? sourceAsset.name : 'None Selected'}
               </span>
               {sourceAsset && (
-                <button
-                  type="button"
-                  onClick={onInsertSourceAtPlayhead}
-                  className="text-[10px] font-medium text-[#60A5FA] hover:text-white cursor-pointer whitespace-nowrap"
-                >
-                  + Add to Timeline
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  {onInsertSourcePush && (
+                    <button
+                      type="button"
+                      onClick={onInsertSourcePush}
+                      title="Insert at Playhead & Push Later Clips Forward (,)"
+                      className="text-[10px] font-medium text-[#34D399] hover:text-white cursor-pointer whitespace-nowrap"
+                    >
+                      Insert (Push)
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={onInsertSourceAtPlayhead}
+                    title="Place at Playhead (.)"
+                    className="text-[10px] font-medium text-[#60A5FA] hover:text-white cursor-pointer whitespace-nowrap"
+                  >
+                    + Add Here
+                  </button>
+                </div>
               )}
             </div>
             <div className="flex-1 min-h-0 flex items-center justify-center p-2 bg-[#08090B]">
@@ -346,7 +393,7 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
               </span>
             </div>
           )}
-          <div className="flex-1 min-h-0 flex items-center justify-center p-2 bg-[#0D0F13] overflow-auto">
+          <div className="flex-1 min-h-0 flex flex-col items-center justify-center p-2 bg-[#0D0F13] overflow-auto">
             <canvas
               ref={programCanvasRef}
               width={canvasDims.w}
@@ -361,7 +408,7 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
                       width: 'auto',
                       height: 'auto',
                       maxWidth: '100%',
-                      maxHeight: '100%',
+                      maxHeight: showCompare ? 'calc(100% - 28px)' : '100%',
                       aspectRatio: `${sequence.width} / ${sequence.height}`,
                     }
                   : zoom === '50'
@@ -374,6 +421,24 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
                   : ''
               }`}
             />
+            {showCompare && onChangeCompareSplit && (
+              <div className="mt-1.5 flex items-center gap-2 px-2.5 py-1 bg-[#16181F] border border-[#282B33] rounded text-[10px] text-[#C7CBD4]">
+                <span className="text-[#8E939E] whitespace-nowrap">Split Wipe</span>
+                <input
+                  type="range"
+                  min={0.05}
+                  max={0.95}
+                  step={0.01}
+                  value={compareSplit}
+                  aria-label="Compare Before After Split Position"
+                  onChange={(e) => onChangeCompareSplit(Number(e.target.value))}
+                  className="w-36 studio-slider"
+                />
+                <span className="font-mono-tabular w-8 text-right">
+                  {Math.round(compareSplit * 100)}%
+                </span>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -462,10 +527,32 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
           >
             Out
           </button>
+          {onClearInOut && sequence.inPoint !== null && sequence.outPoint !== null && (
+            <button
+              type="button"
+              onClick={onClearInOut}
+              title="Clear In & Out Range (Alt+X)"
+              aria-label="Clear In and Out Range"
+              className="p-1 text-[#7D838F] hover:text-white hover:bg-[#24272F] rounded cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
 
-        {/* Right: Sound Toggle + Playback Speed + Loop */}
-        <div className="flex items-center justify-end gap-1.5 min-w-[160px]">
+        {/* Right: Capture Frame + Sound Toggle + Playback Speed + Loop */}
+        <div className="flex items-center justify-end gap-1.5 min-w-[180px]">
+          {onCaptureFrame && (
+            <button
+              type="button"
+              onClick={onCaptureFrame}
+              title="Save Current Frame as Image into Media Library"
+              aria-label="Capture Frame to Media Library"
+              className="p-1.5 rounded border bg-[#1B1D23] border-[#282B33] text-[#C7CBD4] hover:text-white cursor-pointer transition-colors"
+            >
+              <Camera className="w-3.5 h-3.5" />
+            </button>
+          )}
           {onToggleMute && (
             <button
               type="button"

@@ -147,3 +147,21 @@ test('posterize, threshold, and chromatic aberration effects transform image dat
   assert.equal(row[4], 255);
   assert.equal(row[10], 200);
 });
+
+test('chromaKey removes green screen pixels and preserves foreground subjects', () => {
+  const px = new Uint8ClampedArray([
+    0, 177, 64, 255, // pure green screen
+    220, 40, 40, 255, // foreground red subject
+  ]);
+  applyColorGradeToImageData(px, createDefaultColorGrade(), {
+    ...DEFAULT_EFFECTS,
+    chromaKey: {
+      enabled: true,
+      color: '#00b140',
+      similarity: 34,
+      smoothness: 12,
+    },
+  });
+  assert.equal(px[3], 0);
+  assert.equal(px[7], 255);
+});

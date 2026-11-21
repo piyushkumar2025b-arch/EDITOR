@@ -41,6 +41,12 @@ export const DEFAULT_EFFECTS: ClipEffects = {
   tiltShift: 0,
   mirrorMode: 'none',
   maskShape: 'rect',
+  chromaKey: {
+    enabled: false,
+    color: '#00b140',
+    similarity: 34,
+    smoothness: 14,
+  },
 };
 
 export const DEFAULT_CURVE: CurvePoint[] = [
@@ -475,7 +481,8 @@ export function isEffectsIdentity(effects?: ClipEffects): boolean {
     (effects.scanlines ?? 0) === 0 &&
     (effects.tiltShift ?? 0) === 0 &&
     (!effects.mirrorMode || effects.mirrorMode === 'none') &&
-    (!effects.maskShape || effects.maskShape === 'rect')
+    (!effects.maskShape || effects.maskShape === 'rect') &&
+    !effects.chromaKey?.enabled
   );
 }
 
@@ -554,6 +561,7 @@ export function applyColorGradeToImageData(
   const posterLevels = effects?.posterize ?? 0;
   const threshVal = effects?.threshold ?? 0;
   const chromAmt = effects?.chromatic ?? 0;
+  const chroma = effects?.chromaKey?.enabled ? effects.chromaKey : null;
   if (
     gradeId &&
     sepiaAmt === 0 &&
@@ -561,7 +569,8 @@ export function applyColorGradeToImageData(
     !invertFlag &&
     posterLevels < 2 &&
     threshVal <= 0 &&
-    chromAmt <= 0
+    chromAmt <= 0 &&
+    !chroma
   ) {
     return;
   }
@@ -799,6 +808,36 @@ export function applyColorGradeToImageData(
         const bx = Math.min(w - 1, x + shiftPx);
         data[dst] = snap[rowStart + rx * 4];
         data[dst + 2] = snap[rowStart + bx * 4 + 2];
+      }
+    }
+  }
+
+  // Ultra Key / Chroma Key (Green/Blue/Custom background removal)
+  if (chroma) {
+    const hex = (chroma.color || '#00b140').replace('#', '');
+    const parsed = parseInt(hex.length === 3 ? hex.split('').map((c) => c + c).join('') : hex, 16);
+    const kr = Number.isFinite(parsed) ? (parsed >> 16) & 255 : 0;
+    const kg = Number.isFinite(parsed) ? (parsed >> 8) & 255 : 177;
+    const kb = Number.isFinite(parsed) ? parsed & 255 : 64;
+
+    const tol = Math.max(8, (chroma.similarity / 100) * 260);
+    const feather = Math.max(2, (chroma.smoothness / 100) * 120);
+
+    for (let i = 0; i < len; i += 4) {
+      if (data[i + 3] === 0) continue;
+      const dr = data[i] - kr;
+      const dg = data[i + 1] - kg;
+      const db = data[i + 2] - kb;
+      const dist = Math.sqrt(dr * dr * 0.8 + dg * dg * 1.25 + db * db * 0.95);
+      if (dist <= tol) {
+        data[i + 3] = 0;
+      } else if (dist < tol + feather) {
+        const alphaFrac = (dist - tol) / feather;
+        data[i + 3] = Math.round(data[i + 3] * alphaFrac);
+        // Subtle green/blue spill suppression on semi-transparent edges
+        if (kg > kr && kg > kb && data[i + 1] > Math.max(data[i], data[i + 2])) {
+          data[i + 1] = Math.round(data[i + 1] * alphaFrac + Math.max(data[i], data[i + 2]) * (1 - alphaFrac));
+        }
       }
     }
   }

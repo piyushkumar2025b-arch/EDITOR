@@ -1,5 +1,8 @@
 import {
+  ClipKeyframe,
+  ClipKeyframes,
   ClipTransform,
+  KeyframeProperty,
   PiPLayoutPreset,
   SequenceAspectPreset,
   TimelineClip,
@@ -249,7 +252,7 @@ export function getActiveClipsAtTime(
   const hasSoloAudio = tracks.some((t) => t.type === 'audio' && t.solo);
 
   const active = clips.filter(
-    (c) => time >= c.startTime && time < c.startTime + c.duration
+    (c) => !c.disabled && time >= c.startTime && time < c.startTime + c.duration
   );
 
   const videoClips = active
@@ -465,4 +468,245 @@ export function getAdjacentCutTime(
   const reversed = [...sorted].reverse();
   const found = reversed.find((t) => t < currentTime - 0.02);
   return found ?? 0;
+}
+
+export function evaluateKeyframeValue(
+  kfs: ClipKeyframe[] | undefined,
+  localTime: number,
+  fallbackValue: number
+): number {
+  if (!kfs || kfs.length === 0) return fallbackValue;
+  const sorted = [...kfs].sort((a, b) => a.time - b.time);
+  if (localTime <= sorted[0].time) return sorted[0].value;
+  if (localTime >= sorted[sorted.length - 1].time) return sorted[sorted.length - 1].value;
+
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const k0 = sorted[i];
+    const k1 = sorted[i + 1];
+    if (localTime >= k0.time && localTime <= k1.time) {
+      const span = k1.time - k0.time;
+      if (span <= 0.0001) return k1.value;
+      let t = (localTime - k0.time) / span;
+      if ((k1.easing ?? k0.easing) === 'ease') {
+        t = t * t * (3 - 2 * t);
+      }
+      return k0.value + (k1.value - k0.value) * t;
+    }
+  }
+  return fallbackValue;
+}
+
+export function evaluateTransformWithKeyframes(
+  transform: ClipTransform,
+  keyframes: ClipKeyframes | undefined,
+  localTime: number
+): ClipTransform {
+  if (!keyframes) return transform;
+  return {
+    ...transform,
+    x: evaluateKeyframeValue(keyframes.x, localTime, transform.x),
+    y: evaluateKeyframeValue(keyframes.y, localTime, transform.y),
+    scale: evaluateKeyframeValue(keyframes.scale, localTime, transform.scale),
+    rotation: evaluateKeyframeValue(keyframes.rotation, localTime, transform.rotation),
+    opacity: evaluateKeyframeValue(keyframes.opacity, localTime, transform.opacity),
+  };
+}
+
+export function toggleClipKeyframe(
+  keyframes: ClipKeyframes | undefined,
+  prop: KeyframeProperty,
+  localTime: number,
+  value: number,
+  easing: 'linear' | 'ease' = 'ease'
+): ClipKeyframes {
+  const existing = [...(keyframes?.[prop] ?? [])];
+  const t = Math.max(0, Number(localTime.toFixed(3)));
+  const hitIdx = existing.findIndex((k) => Math.abs(k.time - t) < 0.06);
+  if (hitIdx >= 0) {
+    existing.splice(hitIdx, 1);
+  } else {
+    existing.push({ time: t, value, easing });
+    existing.sort((a, b) => a.time - b.time);
+  }
+  return {
+    ...(keyframes ?? {}),
+    [prop]: existing,
+  };
+}
+
+export function setClipKeyframeValue(
+  keyframes: ClipKeyframes | undefined,
+  prop: KeyframeProperty,
+  localTime: number,
+  value: number,
+  easing: 'linear' | 'ease' = 'ease'
+): ClipKeyframes {
+  const existing = [...(keyframes?.[prop] ?? [])];
+  const t = Math.max(0, Number(localTime.toFixed(3)));
+  const hitIdx = existing.findIndex((k) => Math.abs(k.time - t) < 0.06);
+  if (hitIdx >= 0) {
+    existing[hitIdx] = { ...existing[hitIdx], value, easing };
+  } else {
+    existing.push({ time: t, value, easing });
+    existing.sort((a, b) => a.time - b.time);
+  }
+  return {
+    ...(keyframes ?? {}),
+    [prop]: existing,
+  };
+}
+
+export function rateStretchClip(
+  clips: TimelineClip[],
+  clipId: string,
+  edge: 'left' | 'right',
+  newTime: number,
+  minDuration: number = 0.4
+): TimelineClip[] {
+  const target = clips.find((c) => c.id === clipId);
+  if (!target) return clips;
+  const oldSpeed = Math.max(0.25, target.speed || 1);
+  const sourceSpan = target.duration * oldSpeed;
+
+  let nextStart = target.startTime;
+  let nextDuration = target.duration;
+
+  if (edge === 'right') {
+    nextDuration = Math.max(minDuration, newTime - target.startTime);
+  } else {
+    const end = target.startTime + target.duration;
+    const clampedStart = Math.max(0, Math.min(end - minDuration, newTime));
+    nextStart = clampedStart;
+    nextDuration = end - clampedStart;
+  }
+
+  const nextSpeed = Math.max(0.25, Math.min(4, Number((sourceSpan / nextDuration).toFixed(2))));
+  const clampedDuration = Number((sourceSpan / nextSpeed).toFixed(4));
+  if (edge === 'left') {
+    nextStart = Math.max(0, Number((target.startTime + target.duration - clampedDuration).toFixed(4)));
+  }
+
+  return clips.map((c) =>
+    c.id === clipId
+      ? {
+          ...c,
+          startTime: Number(nextStart.toFixed(4)),
+          duration: clampedDuration,
+          speed: nextSpeed,
+        }
+      : c
+  );
+}
+
+export function moveClipsForward(
+  clips: TimelineClip[],
+  anchorClipId: string,
+  deltaSeconds: number,
+  tracks: Track[],
+  allTracks: boolean = false
+): TimelineClip[] {
+  const anchor = clips.find((c) => c.id === anchorClipId);
+  if (!anchor || Math.abs(deltaSeconds) < 0.0001) return clips;
+  const lockedIds = new Set(tracks.filter((t) => t.locked).map((t) => t.id));
+  if (lockedIds.has(anchor.trackId)) return clips;
+
+  const threshold = anchor.startTime - 0.001;
+  const affected = clips.filter(
+    (c) =>
+      !lockedIds.has(c.trackId) &&
+      (allTracks || c.trackId === anchor.trackId) &&
+      c.startTime >= threshold
+  );
+  const minAllowedDelta = affected.reduce(
+    (acc, c) => Math.max(acc, -c.startTime),
+    deltaSeconds
+  );
+  const resolvedDelta = Math.max(minAllowedDelta, deltaSeconds);
+  const affectedIds = new Set(affected.map((c) => c.id));
+
+  return clips.map((c) =>
+    affectedIds.has(c.id)
+      ? { ...c, startTime: Math.max(0, Number((c.startTime + resolvedDelta).toFixed(4))) }
+      : c
+  );
+}
+
+export function insertClipWithRipple(
+  clips: TimelineClip[],
+  newClip: TimelineClip
+): TimelineClip[] {
+  const pushAt = newClip.startTime;
+  const pushDelta = newClip.duration;
+  const updated = clips.map((c) => {
+    if (c.trackId === newClip.trackId && c.startTime + c.duration > pushAt + 0.001) {
+      return {
+        ...c,
+        startTime: Number((c.startTime + pushDelta).toFixed(4)),
+      };
+    }
+    return c;
+  });
+  return [...updated, newClip];
+}
+
+export function liftOrExtractRange(
+  clips: TimelineClip[],
+  tracks: Track[],
+  inTime: number,
+  outTime: number,
+  extract: boolean
+): TimelineClip[] {
+  if (outTime <= inTime + 0.05) return clips;
+  const lockedIds = new Set(tracks.filter((t) => t.locked).map((t) => t.id));
+  const span = Number((outTime - inTime).toFixed(4));
+  const next: TimelineClip[] = [];
+
+  for (const clip of clips) {
+    if (lockedIds.has(clip.trackId)) {
+      next.push(clip);
+      continue;
+    }
+    const cEnd = clip.startTime + clip.duration;
+    // Entirely before inTime
+    if (cEnd <= inTime + 0.001) {
+      next.push(clip);
+      continue;
+    }
+    // Entirely after outTime
+    if (clip.startTime >= outTime - 0.001) {
+      next.push(
+        extract
+          ? { ...clip, startTime: Math.max(0, Number((clip.startTime - span).toFixed(4))) }
+          : clip
+      );
+      continue;
+    }
+    // Left piece before inTime
+    if (clip.startTime < inTime - 0.05) {
+      next.push({
+        ...clip,
+        duration: Number((inTime - clip.startTime).toFixed(4)),
+        fadeOut: 0,
+      });
+    }
+    // Right piece after outTime
+    if (cEnd > outTime + 0.05) {
+      const rightStart = extract ? inTime : outTime;
+      const offsetUsed = outTime - clip.startTime;
+      next.push({
+        ...structuredClone(clip),
+        id: `${clip.id}_rng_${Math.random().toString(36).slice(2, 6)}`,
+        startTime: Number(rightStart.toFixed(4)),
+        duration: Number((cEnd - outTime).toFixed(4)),
+        sourceIn: Number((clip.sourceIn + offsetUsed * clip.speed).toFixed(4)),
+        fadeIn: 0,
+      });
+    }
+  }
+
+  return next;
+}
+
+export function toggleClipDisabled(clips: TimelineClip[], clipId: string): TimelineClip[] {
+  return clips.map((c) => (c.id === clipId ? { ...c, disabled: !c.disabled } : c));
 }

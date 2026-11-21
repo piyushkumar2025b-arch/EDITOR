@@ -1,8 +1,33 @@
-export type MediaKind = 'video' | 'image' | 'audio' | 'title';
+export type MediaKind = 'video' | 'image' | 'audio' | 'title' | 'adjustment' | 'matte';
 
 export type WorkspaceMode = 'editing' | 'color' | 'photo' | 'audio';
 
-export type ToolMode = 'select' | 'razor' | 'trim' | 'hand' | 'text';
+export type ToolMode =
+  | 'select'
+  | 'track-select'
+  | 'razor'
+  | 'trim'
+  | 'rate-stretch'
+  | 'slip'
+  | 'hand'
+  | 'text';
+
+export type KeyframeProperty = 'x' | 'y' | 'scale' | 'rotation' | 'opacity';
+
+export interface ClipKeyframe {
+  time: number; // relative seconds from clip start (0..duration)
+  value: number;
+  easing?: 'linear' | 'ease';
+}
+
+export type ClipKeyframes = Partial<Record<KeyframeProperty, ClipKeyframe[]>>;
+
+export interface ChromaKeySettings {
+  enabled: boolean;
+  color: string; // Hex key color e.g. '#00b140'
+  similarity: number; // 5..85 color distance tolerance
+  smoothness: number; // 0..45 edge feather
+}
 
 export type LUTPresetId =
   | 'none'
@@ -132,6 +157,7 @@ export interface ClipEffects {
   tiltShift?: number; // 0..100 % soft top/bottom blur focus
   mirrorMode?: MirrorEffectMode;
   maskShape?: MaskShape;
+  chromaKey?: ChromaKeySettings;
 }
 
 export interface ClipTransform {
@@ -206,6 +232,7 @@ export interface TimelineClip {
   trackId: string;
   name: string;
   kind: MediaKind;
+  disabled?: boolean;
   startTime: number; // seconds on timeline
   duration: number; // seconds on timeline
   sourceIn: number; // seconds into source asset
@@ -219,9 +246,12 @@ export interface TimelineClip {
   gainDb: number; // -48..+12
   audioTone?: AudioTonePreset;
   transform: ClipTransform;
+  keyframes?: ClipKeyframes;
   effects?: ClipEffects;
   color: ColorGrade;
   textOverlay?: TextOverlay;
+  matteColor?: string;
+  matteSecondaryColor?: string;
 }
 
 export interface TimelineMarker {

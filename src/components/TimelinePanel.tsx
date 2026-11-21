@@ -1,12 +1,14 @@
 import React, { memo, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeftToLine,
+  ArrowRight,
   ArrowRightToLine,
   Bookmark,
   Columns2,
   Copy,
   Eye,
   EyeOff,
+  Gauge,
   Hand,
   Lock,
   Magnet,
@@ -14,6 +16,7 @@ import {
   MousePointer2,
   MoveHorizontal,
   Plus,
+  Repeat2,
   Scissors,
   Sparkles,
   Trash2,
@@ -52,12 +55,18 @@ interface TimelinePanelProps {
   onSelectClip: (clipId: string | null) => void;
   onSeek: (time: number) => void;
   onMoveClip: (clipId: string, newStartTime: number, newTrackId: string) => void;
+  onMoveClipsForward?: (clipId: string, deltaSeconds: number, allTracks: boolean) => void;
   onTrimClip: (clipId: string, edge: 'left' | 'right', newTime: number) => void;
+  onRateStretchClip?: (clipId: string, edge: 'left' | 'right', newTime: number) => void;
+  onSlipClip?: (clipId: string, nextSourceIn: number) => void;
   onTrimClipToPlayhead: (clipId: string, edge: 'left' | 'right') => void;
   onSplitClip: (clipId: string, splitTime: number) => void;
   onSplitAllAtPlayhead: () => void;
   onDeleteClip: (clipId: string, ripple: boolean) => void;
+  onToggleClipDisabled?: (clipId: string) => void;
   onCloseTrackGaps: (trackId: string) => void;
+  onLiftRange?: () => void;
+  onExtractRange?: () => void;
   onDuplicateClip: (clipId: string) => void;
   onAddMarker: () => void;
   onAddTextAtPlayhead: () => void;
@@ -86,12 +95,18 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
   onSelectClip,
   onSeek,
   onMoveClip,
+  onMoveClipsForward,
   onTrimClip,
+  onRateStretchClip,
+  onSlipClip,
   onTrimClipToPlayhead,
   onSplitClip,
   onSplitAllAtPlayhead,
   onDeleteClip,
+  onToggleClipDisabled,
   onCloseTrackGaps,
+  onLiftRange,
+  onExtractRange,
   onDuplicateClip,
   onAddMarker,
   onAddTextAtPlayhead,
@@ -102,12 +117,24 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
 }) => {
   const [pixelsPerSecond, setPixelsPerSecond] = useState(52);
   const [dragState, setDragState] = useState<{
-    mode: 'move' | 'trim-left' | 'trim-right' | 'scrub' | 'pan';
+    mode:
+      | 'move'
+      | 'move-forward'
+      | 'trim-left'
+      | 'trim-right'
+      | 'stretch-left'
+      | 'stretch-right'
+      | 'slip'
+      | 'scrub'
+      | 'pan';
     clipId?: string;
     startClientX: number;
+    lastAppliedDelta?: number;
+    allTracks?: boolean;
     origScrollLeft?: number;
     origStartTime: number;
     origDuration: number;
+    origSourceIn?: number;
     origTrackId: string;
   } | null>(null);
 
@@ -166,6 +193,15 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
       const snappedStart = snapTime(rawStart, snapPoints, snapThreshold, snapEnabled);
       const targetTrackId = clientYToTrackId(e.clientY, dragState.origTrackId);
       onMoveClip(dragState.clipId, snappedStart, targetTrackId);
+    } else if (dragState.mode === 'move-forward' && onMoveClipsForward) {
+      const rawStart = Math.max(0, dragState.origStartTime + deltaSec);
+      const snappedStart = snapTime(rawStart, snapPoints, snapThreshold, snapEnabled);
+      const desiredTotalDelta = snappedStart - dragState.origStartTime;
+      const incremental = desiredTotalDelta - (dragState.lastAppliedDelta ?? 0);
+      if (Math.abs(incremental) > 0.002) {
+        onMoveClipsForward(dragState.clipId, incremental, Boolean(dragState.allTracks));
+        setDragState((prev) => (prev ? { ...prev, lastAppliedDelta: desiredTotalDelta } : prev));
+      }
     } else if (dragState.mode === 'trim-left') {
       const rawEdge = Math.max(0, dragState.origStartTime + deltaSec);
       const snappedEdge = snapTime(rawEdge, snapPoints, snapThreshold, snapEnabled);
@@ -174,6 +210,17 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
       const rawEdge = Math.max(0.25, dragState.origStartTime + dragState.origDuration + deltaSec);
       const snappedEdge = snapTime(rawEdge, snapPoints, snapThreshold, snapEnabled);
       onTrimClip(dragState.clipId, 'right', snappedEdge);
+    } else if (dragState.mode === 'stretch-left' && onRateStretchClip) {
+      const rawEdge = Math.max(0, dragState.origStartTime + deltaSec);
+      const snappedEdge = snapTime(rawEdge, snapPoints, snapThreshold, snapEnabled);
+      onRateStretchClip(dragState.clipId, 'left', snappedEdge);
+    } else if (dragState.mode === 'stretch-right' && onRateStretchClip) {
+      const rawEdge = Math.max(0.4, dragState.origStartTime + dragState.origDuration + deltaSec);
+      const snappedEdge = snapTime(rawEdge, snapPoints, snapThreshold, snapEnabled);
+      onRateStretchClip(dragState.clipId, 'right', snappedEdge);
+    } else if (dragState.mode === 'slip' && onSlipClip) {
+      const nextSourceIn = Math.max(0, (dragState.origSourceIn ?? 0) - deltaSec);
+      onSlipClip(dragState.clipId, nextSourceIn);
     }
   };
 
@@ -196,8 +243,11 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
 
   const tools: { id: ToolMode; label: string; shortLabel: string; shortcut: string; icon: React.ReactNode }[] = [
     { id: 'select', label: 'Select & Move Tool', shortLabel: 'Select', shortcut: 'V', icon: <MousePointer2 className="w-3.5 h-3.5" /> },
+    { id: 'track-select', label: 'Track Select Forward Tool', shortLabel: 'Ahead', shortcut: 'A', icon: <ArrowRight className="w-3.5 h-3.5" /> },
     { id: 'razor', label: 'Cut Clip Tool', shortLabel: 'Cut', shortcut: 'C', icon: <Scissors className="w-3.5 h-3.5" /> },
     { id: 'trim', label: 'Trim Edges Tool', shortLabel: 'Trim', shortcut: 'B', icon: <MoveHorizontal className="w-3.5 h-3.5" /> },
+    { id: 'rate-stretch', label: 'Rate Stretch Speed Tool', shortLabel: 'Speed', shortcut: 'R', icon: <Gauge className="w-3.5 h-3.5" /> },
+    { id: 'slip', label: 'Slip Source Offset Tool', shortLabel: 'Slip', shortcut: 'Y', icon: <Repeat2 className="w-3.5 h-3.5" /> },
     { id: 'text', label: 'Add Text Overlay', shortLabel: 'Text', shortcut: 'T', icon: <Type className="w-3.5 h-3.5" /> },
     { id: 'hand', label: 'Scroll / Pan Timeline', shortLabel: 'Pan', shortcut: 'H', icon: <Hand className="w-3.5 h-3.5" /> },
   ];
@@ -205,11 +255,20 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
   const activeToolHint =
     activeTool === 'razor'
       ? 'Cut Mode (C): Click any clip to split it'
+      : activeTool === 'track-select'
+      ? 'Select Ahead (A): Drag any clip to slide it + all later clips on track (Hold Shift for all tracks)'
+      : activeTool === 'rate-stretch'
+      ? 'Rate Stretch (R): Drag clip edges to speed up or slow down playback'
+      : activeTool === 'slip'
+      ? 'Slip Mode (Y): Drag inside a clip to shift its internal start offset'
       : activeTool === 'trim'
       ? 'Trim Mode (B): Drag clip edges shorter or longer'
       : activeTool === 'hand'
       ? 'Pan Mode (H): Drag tracks left or right to scroll'
       : 'Select Mode (V): Drag clips to move · Drag edges to trim';
+
+  const hasRange =
+    sequence.inPoint !== null && sequence.outPoint !== null && sequence.outPoint > sequence.inPoint + 0.05;
 
   return (
     <section
@@ -272,6 +331,29 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
             <span>Cut All</span>
           </button>
 
+          {hasRange && onLiftRange && onExtractRange && (
+            <>
+              <button
+                type="button"
+                onClick={onLiftRange}
+                title="Lift Marked In→Out Range (Leaves Gap) (;)"
+                aria-label="Lift Range"
+                className="px-2 py-1 text-[11px] text-[#C7CBD4] hover:text-white bg-[#1D1F26] border border-[#292D36] rounded cursor-pointer whitespace-nowrap"
+              >
+                Lift Range
+              </button>
+              <button
+                type="button"
+                onClick={onExtractRange}
+                title="Extract Marked In→Out Range & Close Gap (')"
+                aria-label="Extract Range"
+                className="px-2 py-1 text-[11px] text-[#93C5FD] hover:text-white bg-[#1D1F26] border border-[#292D36] rounded cursor-pointer whitespace-nowrap"
+              >
+                Extract
+              </button>
+            </>
+          )}
+
           {selectedClip && (
             <>
               <button
@@ -312,6 +394,22 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
                 <Sparkles className="w-3 h-3" />
                 <span>Fade</span>
               </button>
+              {onToggleClipDisabled && (
+                <button
+                  type="button"
+                  onClick={() => onToggleClipDisabled(selectedClip.id)}
+                  aria-pressed={Boolean(selectedClip.disabled)}
+                  title={selectedClip.disabled ? 'Enable Clip (E)' : 'Disable Clip Temporarily (E)'}
+                  aria-label={selectedClip.disabled ? 'Enable Clip' : 'Disable Clip'}
+                  className={`p-1.5 rounded border cursor-pointer ${
+                    selectedClip.disabled
+                      ? 'bg-[#D97706]/20 border-[#D97706] text-[#FBBF24]'
+                      : 'bg-[#1D1F26] border-[#292D36] text-[#C7CBD4] hover:text-white'
+                  }`}
+                >
+                  {selectedClip.disabled ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => onDuplicateClip(selectedClip.id)}
@@ -395,7 +493,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
         {/* 1. Left Tool Strip */}
         <div
           aria-label="Timeline Tools"
-          className="w-12 shrink-0 bg-[#16171C] border-r border-[#24272E] py-1.5 flex flex-col items-center gap-1 overflow-y-auto"
+          className="w-12 shrink-0 bg-[#16171C] border-r border-[#24272E] py-1 flex flex-col items-center gap-0.5 overflow-y-auto"
         >
           {tools.map((t) => {
             const active = activeTool === t.id;
@@ -413,14 +511,14 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
                 aria-pressed={active}
                 aria-label={`${t.label} (${t.shortcut})`}
                 title={`${t.label} (${t.shortcut})`}
-                className={`w-10 py-1 flex flex-col items-center justify-center gap-0.5 rounded transition-colors cursor-pointer ${
+                className={`w-10 py-0.5 flex flex-col items-center justify-center gap-0.5 rounded transition-colors cursor-pointer ${
                   active
                     ? 'bg-[#3B82F6] text-white'
                     : 'text-[#9CA3AF] hover:text-white hover:bg-[#23262F]'
                 }`}
               >
                 {t.icon}
-                <span className="text-[9px] leading-none font-medium">{t.shortLabel}</span>
+                <span className="text-[8.5px] leading-none font-medium">{t.shortLabel}</span>
               </button>
             );
           })}
@@ -656,7 +754,19 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
                           ? 'bg-[#13382E] border-[#1E5B49] text-[#D1FAE5]'
                           : clip.kind === 'title'
                           ? 'bg-[#312548] border-[#523C7A] text-[#EDE9FE]'
+                          : clip.kind === 'adjustment'
+                          ? 'bg-[#2C2042] border-[#7C3AED]/70 text-[#EDE9FE]'
+                          : clip.kind === 'matte'
+                          ? 'bg-[#35261A] border-[#B45309]/80 text-[#FEF3C7]'
                           : 'bg-[#1C3353] border-[#2C5282] text-[#E0F2FE]';
+
+                      const keyframeTimes = Array.from(
+                        new Set(
+                          Object.values(clip.keyframes ?? {})
+                            .flatMap((arr) => arr ?? [])
+                            .map((k) => Number(k.time.toFixed(2)))
+                        )
+                      );
 
                       return (
                         <div
@@ -673,6 +783,31 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
                             }
                             onSelectClip(clip.id);
                             if (tr.locked) return;
+                            if (activeTool === 'track-select') {
+                              setDragState({
+                                mode: 'move-forward',
+                                clipId: clip.id,
+                                startClientX: e.clientX,
+                                lastAppliedDelta: 0,
+                                allTracks: e.shiftKey,
+                                origStartTime: clip.startTime,
+                                origDuration: clip.duration,
+                                origTrackId: clip.trackId,
+                              });
+                              return;
+                            }
+                            if (activeTool === 'slip') {
+                              setDragState({
+                                mode: 'slip',
+                                clipId: clip.id,
+                                startClientX: e.clientX,
+                                origStartTime: clip.startTime,
+                                origDuration: clip.duration,
+                                origSourceIn: clip.sourceIn,
+                                origTrackId: clip.trackId,
+                              });
+                              return;
+                            }
                             setDragState({
                               mode: 'move',
                               clipId: clip.id,
@@ -683,12 +818,18 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
                             });
                           }}
                           className={`group absolute top-1 bottom-1 rounded-xs border overflow-hidden flex flex-col justify-between transition-shadow ${paletteClass} ${
-                            selected ? 'ring-1.5 ring-[#F59E0B] border-[#F59E0B] z-10' : ''
-                          } ${activeTool === 'razor' ? 'cursor-crosshair' : 'cursor-grab active:cursor-grabbing'}`}
+                            clip.disabled ? 'opacity-45 border-dashed' : ''
+                          } ${selected ? 'ring-1.5 ring-[#F59E0B] border-[#F59E0B] z-10' : ''} ${
+                            activeTool === 'razor'
+                              ? 'cursor-crosshair'
+                              : activeTool === 'slip'
+                              ? 'cursor-ew-resize'
+                              : 'cursor-grab active:cursor-grabbing'
+                          }`}
                         >
                           <div className="px-1.5 pt-0.5 flex items-center justify-between gap-1 text-[10px] font-medium leading-none truncate pointer-events-none">
                             <span className="truncate">
-                              {hasTransition ? '◆ ' : ''}
+                              {clip.disabled ? '[Off] ' : hasTransition ? '◆ ' : ''}
                               {clip.name}
                             </span>
                             {widthPx > 85 && (
@@ -719,8 +860,30 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
                                   className="w-full h-full object-cover"
                                 />
                               </div>
+                            ) : clip.kind === 'matte' ? (
+                              <div
+                                className="w-full h-2.5 rounded-xs opacity-75"
+                                style={{
+                                  background: `linear-gradient(90deg, ${clip.matteColor || '#1e3a8a'}, ${
+                                    clip.matteSecondaryColor || clip.matteColor || '#1e3a8a'
+                                  })`,
+                                }}
+                              />
                             ) : null}
                           </div>
+
+                          {/* Keyframe diamond markers */}
+                          {keyframeTimes.map((kt) => {
+                            const pct = Math.max(2, Math.min(98, (kt / Math.max(0.1, clip.duration)) * 100));
+                            return (
+                              <span
+                                key={kt}
+                                style={{ left: `${pct}%` }}
+                                title={`Keyframe at ${kt.toFixed(2)}s`}
+                                className="absolute bottom-0.5 -translate-x-1/2 w-1.5 h-1.5 bg-[#F59E0B] rotate-45 pointer-events-none"
+                              />
+                            );
+                          })}
 
                           {activeTool !== 'razor' && !tr.locked && (
                             <>
@@ -731,7 +894,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
                                   e.stopPropagation();
                                   onSelectClip(clip.id);
                                   setDragState({
-                                    mode: 'trim-left',
+                                    mode: activeTool === 'rate-stretch' ? 'stretch-left' : 'trim-left',
                                     clipId: clip.id,
                                     startClientX: e.clientX,
                                     origStartTime: clip.startTime,
@@ -748,7 +911,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
                                   e.stopPropagation();
                                   onSelectClip(clip.id);
                                   setDragState({
-                                    mode: 'trim-right',
+                                    mode: activeTool === 'rate-stretch' ? 'stretch-right' : 'trim-right',
                                     clipId: clip.id,
                                     startClientX: e.clientX,
                                     origStartTime: clip.startTime,

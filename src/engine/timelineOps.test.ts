@@ -14,6 +14,7 @@ import {
   splitAllAtTime,
   splitClipAtTime,
   moveClip,
+  moveClipsForward,
   nudgeClip,
   slipClipSource,
   trimClip,
@@ -24,6 +25,13 @@ import {
   getPiPLayoutTransform,
   getSequenceDimensionsForRatio,
   pasteClipAtTime,
+  evaluateTransformWithKeyframes,
+  toggleClipKeyframe,
+  setClipKeyframeValue,
+  rateStretchClip,
+  insertClipWithRipple,
+  liftOrExtractRange,
+  toggleClipDisabled,
 } from './timelineOps';
 import { createDefaultColorGrade, DEFAULT_TRANSFORM } from './colorEngine';
 import { createSeedProject } from './seedProject';
@@ -129,12 +137,17 @@ test('deleteClip with ripple shifts subsequent clips on the same track', () => {
   assert.equal(c3?.startTime, 5.5);
 });
 
-test('getActiveClipsAtTime respects track visibility and solo state', () => {
+test('getActiveClipsAtTime respects track visibility, solo state, and disabled clips', () => {
   const project = createSeedProject();
   const at7 = getActiveClipsAtTime(project.clips, project.tracks, 7.0);
   assert.equal(at7.videoClips.length, 2);
   assert.equal(at7.videoClips[0].id, 'clip_2');
   assert.equal(at7.videoClips[1].id, 'clip_title_1');
+
+  const disabledClips = toggleClipDisabled(project.clips, 'clip_2');
+  const afterDisable = getActiveClipsAtTime(disabledClips, project.tracks, 7.0);
+  assert.equal(afterDisable.videoClips.length, 1);
+  assert.equal(afterDisable.videoClips[0].id, 'clip_title_1');
 
   const tracksWithHiddenV3 = project.tracks.map((t) =>
     t.id === 'v3' ? { ...t, visible: false } : t
@@ -208,6 +221,47 @@ test('pip-circle layout, pasteClipAtTime, and getAdjacentCutTime behave accurate
   assert.ok(nextCut > 0.5);
   const prevCut = getAdjacentCutTime(project.clips, project.markers, nextCut, 'prev');
   assert.ok(prevCut < nextCut);
+});
+
+test('keyframes interpolate smoothly across time and toggle cleanly', () => {
+  let kfs = setClipKeyframeValue(undefined, 'scale', 0, 100, 'linear');
+  kfs = setClipKeyframeValue(kfs, 'scale', 2, 150, 'linear');
+  const mid = evaluateTransformWithKeyframes(DEFAULT_TRANSFORM, kfs, 1);
+  assert.equal(mid.scale, 125);
+
+  const removed = toggleClipKeyframe(kfs, 'scale', 2, 150);
+  assert.equal(removed.scale?.length, 1);
+});
+
+test('Premiere NLE operations: rateStretchClip, moveClipsForward, insertClipWithRipple, and liftOrExtractRange', () => {
+  const project = createSeedProject();
+
+  // Rate stretch clip_1 (duration 6, speed 1) to 3s -> speed doubles to 2.0
+  const stretched = rateStretchClip(project.clips, 'clip_1', 'right', 3.0);
+  const c1s = stretched.find((c) => c.id === 'clip_1');
+  assert.equal(c1s?.duration, 3.0);
+  assert.equal(c1s?.speed, 2);
+
+  // Move clips forward starting at clip_2 by +2s pushes clip_2 and clip_3
+  const pushed = moveClipsForward(project.clips, 'clip_2', 2.0, project.tracks, false);
+  assert.equal(pushed.find((c) => c.id === 'clip_2')?.startTime, 8.0);
+  assert.equal(pushed.find((c) => c.id === 'clip_3')?.startTime, 13.5);
+  assert.equal(pushed.find((c) => c.id === 'clip_1')?.startTime, 0);
+
+  // Insert 2s clip at startTime=0 ripples all downstream clips on v1 by +2s
+  const inserted = insertClipWithRipple(project.clips, {
+    ...structuredClone(project.clips[0]),
+    id: 'clip_intro',
+    startTime: 0,
+    duration: 2.0,
+  });
+  assert.equal(inserted.find((c) => c.id === 'clip_1')?.startTime, 2.0);
+  assert.equal(inserted.find((c) => c.id === 'clip_2')?.startTime, 8.0);
+
+  // Extract 2s..4s range ripples later clips back by -2s
+  const extracted = liftOrExtractRange(project.clips, project.tracks, 2.0, 4.0, true);
+  assert.equal(extracted.find((c) => c.id === 'clip_2')?.startTime, 4.0);
+  assert.equal(extracted.find((c) => c.id === 'clip_3')?.startTime, 9.5);
 });
 
 

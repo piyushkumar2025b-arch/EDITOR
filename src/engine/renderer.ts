@@ -5,7 +5,10 @@ import {
   isColorGradeIdentity,
   isEffectsIdentity,
 } from './colorEngine';
-import { getActiveClipsAtTime } from './timelineOps';
+import {
+  evaluateTransformWithKeyframes,
+  getActiveClipsAtTime,
+} from './timelineOps';
 import {
   MaskShape,
   MediaAsset,
@@ -308,6 +311,7 @@ function drawTitleOverlay(
   const overlay = clip.textOverlay;
   if (!overlay) return;
 
+  const evaluatedTf = evaluateTransformWithKeyframes(clip.transform, clip.keyframes, relTime);
   const anim = overlay.animation ?? 'none';
   const enterT = Math.min(1, Math.max(0, relTime / 0.55));
   const ease = 1 - Math.pow(1 - enterT, 3);
@@ -341,11 +345,11 @@ function drawTitleOverlay(
       : '"DM Sans", sans-serif';
 
   ctx.translate(
-    w / 2 + clip.transform.x * (w / 1280),
-    h / 2 + clip.transform.y * (h / 720) + animY
+    w / 2 + evaluatedTf.x * (w / 1280),
+    h / 2 + evaluatedTf.y * (h / 720) + animY
   );
-  ctx.rotate((clip.transform.rotation * Math.PI) / 180);
-  const s = (clip.transform.scale / 100) * animScale;
+  ctx.rotate((evaluatedTf.rotation * Math.PI) / 180);
+  const s = (evaluatedTf.scale / 100) * animScale;
   ctx.scale(s, s);
 
   if (typeof (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing === 'string') {
@@ -673,7 +677,8 @@ export function renderClipToCanvas(
     }
   }
 
-  const finalAlpha = Math.max(0, Math.min(1, (clip.transform.opacity / 100) * fadeAlpha));
+  const evaluatedTf = evaluateTransformWithKeyframes(clip.transform, clip.keyframes, relTime);
+  const finalAlpha = Math.max(0, Math.min(1, (evaluatedTf.opacity / 100) * fadeAlpha));
   if (finalAlpha <= 0.001) return;
 
   if (clip.kind === 'title') {
@@ -681,25 +686,108 @@ export function renderClipToCanvas(
     return;
   }
 
-  if (!asset) return;
+  // Adjustment Layer: reads composite pixels underneath and applies its color grade & effects on top
+  if (clip.kind === 'adjustment') {
+    if (skipColorGrade) return;
+    const sCtx = getScratchContext(canvasWidth, canvasHeight);
+    if (!sCtx) return;
+    sCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+    const blurPx = clip.effects?.blur ?? 0;
+    if (blurPx > 0) sCtx.filter = `blur(${blurPx}px)`;
+    sCtx.drawImage(ctx.canvas, 0, 0);
+    sCtx.filter = 'none';
 
-  let mediaSource: HTMLImageElement | HTMLVideoElement | null = null;
-  let naturalW = asset.width || 1280;
-  let naturalH = asset.height || 720;
-
-  if (asset.kind === 'image') {
-    const img = cache.images.get(asset.id);
-    if (img && img.complete && img.naturalWidth > 0) {
-      mediaSource = img;
-      naturalW = img.naturalWidth;
-      naturalH = img.naturalHeight;
+    applyMirrorModeToCanvas(sCtx, sCtx.canvas, clip.effects?.mirrorMode);
+    if (!isColorGradeIdentity(clip.color) || !isEffectsIdentity(clip.effects)) {
+      const imgData = sCtx.getImageData(0, 0, canvasWidth, canvasHeight);
+      applyColorGradeToImageData(imgData.data, clip.color, clip.effects, canvasWidth);
+      sCtx.putImageData(imgData, 0, 0);
     }
-  } else if (asset.kind === 'video') {
-    const vid = cache.videos.get(asset.id);
-    if (vid && vid.readyState >= 2) {
-      mediaSource = vid;
-      naturalW = vid.videoWidth || asset.width || 1280;
-      naturalH = vid.videoHeight || asset.height || 720;
+
+    const glowAmt = clip.effects?.glow ?? 0;
+    if (glowAmt > 0) {
+      sCtx.save();
+      sCtx.globalCompositeOperation = 'screen';
+      sCtx.globalAlpha = Math.min(0.45, (glowAmt / 100) * 0.4);
+      sCtx.filter = `blur(${Math.round(8 + glowAmt * 0.14)}px)`;
+      sCtx.drawImage(sCtx.canvas, 0, 0);
+      sCtx.restore();
+    }
+    drawCreativeEffectsOverlays(sCtx, canvasWidth, canvasHeight, clip.effects);
+
+    ctx.save();
+    ctx.globalAlpha = finalAlpha;
+    ctx.globalCompositeOperation = evaluatedTf.blendMode;
+    applyTransitionClipMask(ctx, transMask, canvasWidth, canvasHeight);
+    const scaleXFactor = canvasWidth / 1280;
+    const scaleYFactor = canvasHeight / 720;
+    const minScaleFactor = Math.min(scaleXFactor, scaleYFactor);
+    const cTop = (evaluatedTf.cropTop / 100) * canvasHeight;
+    const cBottom = (evaluatedTf.cropBottom / 100) * canvasHeight;
+    const cLeft = (evaluatedTf.cropLeft / 100) * canvasWidth;
+    const cRight = (evaluatedTf.cropRight / 100) * canvasWidth;
+    drawMaskShapePath(
+      ctx,
+      clip.effects?.maskShape,
+      cLeft,
+      cTop,
+      Math.max(1, canvasWidth - cLeft - cRight),
+      Math.max(1, canvasHeight - cTop - cBottom),
+      (clip.effects?.cornerRadius ?? 0) * minScaleFactor
+    );
+    ctx.clip();
+    ctx.drawImage(sCtx.canvas, 0, 0);
+    if (clip.color.vignette !== 0 || clip.color.grain > 0) {
+      drawVignetteAndGrain(ctx, canvasWidth, canvasHeight, clip.color.vignette, clip.color.grain, localTime);
+    }
+    if (whiteFlashAlpha > 0.01) {
+      ctx.fillStyle = `rgba(255,255,255,${whiteFlashAlpha})`;
+      ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+    }
+    ctx.restore();
+    return;
+  }
+
+  let mediaSource: CanvasImageSource | null = null;
+  let naturalW = asset?.width || canvasWidth;
+  let naturalH = asset?.height || canvasHeight;
+
+  if (clip.kind === 'matte') {
+    const matteCanvas = document.createElement('canvas');
+    matteCanvas.width = canvasWidth;
+    matteCanvas.height = canvasHeight;
+    const mCtx = matteCanvas.getContext('2d');
+    if (mCtx) {
+      const c1 = clip.matteColor || '#1e3a8a';
+      const c2 = clip.matteSecondaryColor || c1;
+      const grad = mCtx.createLinearGradient(0, 0, canvasWidth, canvasHeight);
+      grad.addColorStop(0, c1);
+      grad.addColorStop(1, c2);
+      mCtx.fillStyle = grad;
+      mCtx.fillRect(0, 0, canvasWidth, canvasHeight);
+      mediaSource = matteCanvas;
+      naturalW = canvasWidth;
+      naturalH = canvasHeight;
+    }
+  } else {
+    if (!asset) return;
+    naturalW = asset.width || 1280;
+    naturalH = asset.height || 720;
+
+    if (asset.kind === 'image') {
+      const img = cache.images.get(asset.id);
+      if (img && img.complete && img.naturalWidth > 0) {
+        mediaSource = img;
+        naturalW = img.naturalWidth;
+        naturalH = img.naturalHeight;
+      }
+    } else if (asset.kind === 'video') {
+      const vid = cache.videos.get(asset.id);
+      if (vid && vid.readyState >= 2) {
+        mediaSource = vid;
+        naturalW = vid.videoWidth || asset.width || 1280;
+        naturalH = vid.videoHeight || asset.height || 720;
+      }
     }
   }
 
@@ -710,7 +798,7 @@ export function renderClipToCanvas(
     ctx.fillStyle = '#6B7280';
     ctx.font = '500 13px "JetBrains Mono", monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(`LOADING · ${asset.name}`, canvasWidth / 2, canvasHeight / 2);
+    ctx.fillText(`LOADING · ${asset?.name ?? clip.name}`, canvasWidth / 2, canvasHeight / 2);
     ctx.restore();
     return;
   }
@@ -731,11 +819,11 @@ export function renderClipToCanvas(
   const progress = clip.reversed ? 1 - rawProgress : rawProgress;
 
   // Apply Camera Motion Preset + Ken Burns Zoom
-  let motionScale = 1 + (clip.transform.kenBurnsZoom / 100) * progress;
+  let motionScale = 1 + (evaluatedTf.kenBurnsZoom / 100) * progress;
   let motionPanX = 0;
   let motionPanY = 0;
   let motionRotDeg = 0;
-  const motion = clip.transform.motionPreset ?? 'none';
+  const motion = evaluatedTf.motionPreset ?? 'none';
   if (motion === 'zoom-in') {
     motionScale *= 1 + 0.14 * progress;
   } else if (motion === 'zoom-out') {
@@ -756,15 +844,15 @@ export function renderClipToCanvas(
     motionScale *= 1 + 0.04 * Math.sin(relTime * Math.PI * 2.2);
   }
 
-  const cTop = (clip.transform.cropTop / 100) * drawH;
-  const cBottom = (clip.transform.cropBottom / 100) * drawH;
-  const cLeft = (clip.transform.cropLeft / 100) * drawW;
-  const cRight = (clip.transform.cropRight / 100) * drawW;
+  const cTop = (evaluatedTf.cropTop / 100) * drawH;
+  const cBottom = (evaluatedTf.cropBottom / 100) * drawH;
+  const cLeft = (evaluatedTf.cropLeft / 100) * drawW;
+  const cRight = (evaluatedTf.cropRight / 100) * drawW;
 
   const scaleXFactor = canvasWidth / 1280;
   const scaleYFactor = canvasHeight / 720;
   const minScaleFactor = Math.min(scaleXFactor, scaleYFactor);
-  const totalScale = (clip.transform.scale / 100) * motionScale * transitionScaleBoost;
+  const totalScale = (evaluatedTf.scale / 100) * motionScale * transitionScaleBoost;
   const cornerRad = (clip.effects?.cornerRadius ?? 0) * minScaleFactor;
   const borderW = (clip.effects?.borderWidth ?? 0) * minScaleFactor;
   const borderColor = clip.effects?.borderColor ?? '#FFFFFF';
@@ -774,12 +862,12 @@ export function renderClipToCanvas(
   let sourceToDraw: CanvasImageSource = mediaSource;
   let videoNeedsScratchGrade = false;
 
-  if (!skipColorGrade && asset.kind === 'image' && mediaSource instanceof HTMLImageElement) {
+  if (!skipColorGrade && asset && asset.kind === 'image' && mediaSource instanceof HTMLImageElement) {
     const cachedGraded = getOrBuildGradedImageCanvas(mediaSource, asset.id, drawW, drawH, clip);
     if (cachedGraded) {
       sourceToDraw = cachedGraded;
     }
-  } else if (!skipColorGrade && asset.kind === 'video') {
+  } else if (!skipColorGrade && (clip.kind === 'matte' || (asset && asset.kind === 'video'))) {
     if (!isColorGradeIdentity(clip.color) || !isEffectsIdentity(clip.effects)) {
       videoNeedsScratchGrade = true;
     }
@@ -796,13 +884,13 @@ export function renderClipToCanvas(
     sCtx.clearRect(0, 0, canvasWidth, canvasHeight);
     sCtx.save();
     sCtx.translate(
-      canvasWidth / 2 + clip.transform.x * scaleXFactor + motionPanX + slideOffsetX,
-      canvasHeight / 2 + clip.transform.y * scaleYFactor + motionPanY + slideOffsetY
+      canvasWidth / 2 + evaluatedTf.x * scaleXFactor + motionPanX + slideOffsetX,
+      canvasHeight / 2 + evaluatedTf.y * scaleYFactor + motionPanY + slideOffsetY
     );
-    sCtx.rotate(((clip.transform.rotation + motionRotDeg + transitionRotDeg) * Math.PI) / 180);
+    sCtx.rotate(((evaluatedTf.rotation + motionRotDeg + transitionRotDeg) * Math.PI) / 180);
     sCtx.scale(
-      totalScale * (clip.transform.flipH ? -1 : 1),
-      totalScale * (clip.transform.flipV ? -1 : 1)
+      totalScale * (evaluatedTf.flipH ? -1 : 1),
+      totalScale * (evaluatedTf.flipV ? -1 : 1)
     );
     drawMaskShapePath(sCtx, maskShape, cropX, cropY, croppedW, croppedH, cornerRad);
     sCtx.clip();
@@ -822,7 +910,7 @@ export function renderClipToCanvas(
 
     ctx.save();
     ctx.globalAlpha = finalAlpha;
-    ctx.globalCompositeOperation = clip.transform.blendMode;
+    ctx.globalCompositeOperation = evaluatedTf.blendMode;
     applyTransitionClipMask(ctx, transMask, canvasWidth, canvasHeight);
     ctx.drawImage(sourceToDraw, 0, 0);
     if (!skipColorGrade && (clip.color.vignette !== 0 || clip.color.grain > 0)) {
@@ -839,18 +927,18 @@ export function renderClipToCanvas(
   // Fast GPU draw path (zero per-frame pixel loop!)
   ctx.save();
   ctx.globalAlpha = finalAlpha;
-  ctx.globalCompositeOperation = clip.transform.blendMode;
+  ctx.globalCompositeOperation = evaluatedTf.blendMode;
   applyTransitionClipMask(ctx, transMask, canvasWidth, canvasHeight);
 
   ctx.save();
   ctx.translate(
-    canvasWidth / 2 + clip.transform.x * scaleXFactor + motionPanX + slideOffsetX,
-    canvasHeight / 2 + clip.transform.y * scaleYFactor + motionPanY + slideOffsetY
+    canvasWidth / 2 + evaluatedTf.x * scaleXFactor + motionPanX + slideOffsetX,
+    canvasHeight / 2 + evaluatedTf.y * scaleYFactor + motionPanY + slideOffsetY
   );
-  ctx.rotate(((clip.transform.rotation + motionRotDeg + transitionRotDeg) * Math.PI) / 180);
+  ctx.rotate(((evaluatedTf.rotation + motionRotDeg + transitionRotDeg) * Math.PI) / 180);
   ctx.scale(
-    totalScale * (clip.transform.flipH ? -1 : 1),
-    totalScale * (clip.transform.flipV ? -1 : 1)
+    totalScale * (evaluatedTf.flipH ? -1 : 1),
+    totalScale * (evaluatedTf.flipV ? -1 : 1)
   );
 
   if (dropShadowPx > 0.5) {

@@ -4,11 +4,14 @@ import {
   Film,
   FolderPlus,
   Image as ImageIcon,
+  Layers,
   LayoutGrid,
   List,
   Music,
+  Palette,
   Plus,
   Search,
+  Sparkles,
   Type,
 } from 'lucide-react';
 import { secondsToTimecode } from '../engine/timecode';
@@ -21,6 +24,8 @@ interface MediaBinProps {
   onSelectAsset: (assetId: string) => void;
   onInsertAssetToTimeline: (asset: MediaAsset) => void;
   onAddTitleClip: (preset?: 'hero' | 'lower-third' | 'caption') => void;
+  onAddAdjustmentLayer?: () => void;
+  onAddColorMatte?: () => void;
   onAddSynthAudioClip: () => void;
   onImportFiles: (files: FileList) => void;
 }
@@ -32,6 +37,8 @@ export const MediaBin: React.FC<MediaBinProps> = memo(({
   onSelectAsset,
   onInsertAssetToTimeline,
   onAddTitleClip,
+  onAddAdjustmentLayer,
+  onAddColorMatte,
   onAddSynthAudioClip,
   onImportFiles,
 }) => {
@@ -103,7 +110,7 @@ export const MediaBin: React.FC<MediaBinProps> = memo(({
         <button
           type="button"
           onClick={() => onAddTitleClip('hero')}
-          title="Add Title Overlay at Playhead"
+          title="Add Title Overlay at Playhead (T)"
           className="flex items-center justify-center gap-1 py-1 text-[10px] font-medium text-[#C7CBD4] hover:text-white bg-[#1D2027] hover:bg-[#272B34] border border-[#2A2E38] rounded-xs cursor-pointer whitespace-nowrap"
         >
           <Type className="w-3 h-3 text-[#A78BFA]" />
@@ -127,6 +134,37 @@ export const MediaBin: React.FC<MediaBinProps> = memo(({
           <Music className="w-3 h-3 text-[#34D399]" />
           <span>+ Audio</span>
         </button>
+        <button
+          type="button"
+          onClick={() => onAddTitleClip('lower-third')}
+          title="Add Speaker Name Lower Third Bar"
+          className="flex items-center justify-center gap-1 py-1 text-[10px] font-medium text-[#C7CBD4] hover:text-white bg-[#1D2027] hover:bg-[#272B34] border border-[#2A2E38] rounded-xs cursor-pointer whitespace-nowrap"
+        >
+          <Sparkles className="w-3 h-3 text-[#F472B6]" />
+          <span>+ Lower 3rd</span>
+        </button>
+        {onAddAdjustmentLayer && (
+          <button
+            type="button"
+            onClick={onAddAdjustmentLayer}
+            title="Add Adjustment Layer to Grade & Style All Tracks Below"
+            className="flex items-center justify-center gap-1 py-1 text-[10px] font-medium text-[#C7CBD4] hover:text-white bg-[#1D2027] hover:bg-[#272B34] border border-[#2A2E38] rounded-xs cursor-pointer whitespace-nowrap"
+          >
+            <Layers className="w-3 h-3 text-[#C084FC]" />
+            <span>+ Adj. Layer</span>
+          </button>
+        )}
+        {onAddColorMatte && (
+          <button
+            type="button"
+            onClick={onAddColorMatte}
+            title="Add Gradient Color Matte Backdrop"
+            className="flex items-center justify-center gap-1 py-1 text-[10px] font-medium text-[#C7CBD4] hover:text-white bg-[#1D2027] hover:bg-[#272B34] border border-[#2A2E38] rounded-xs cursor-pointer whitespace-nowrap"
+          >
+            <Palette className="w-3 h-3 text-[#F59E0B]" />
+            <span>+ Matte</span>
+          </button>
+        )}
       </div>
 
       {/* Filter & Search Bar */}

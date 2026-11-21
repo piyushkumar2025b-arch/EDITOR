@@ -1,9 +1,13 @@
 import React, { useState } from 'react';
 import {
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   ClipboardCopy,
   ClipboardPaste,
+  Diamond,
+  Eye,
+  EyeOff,
   FlipHorizontal2,
   FlipVertical2,
   PauseCircle,
@@ -17,13 +21,19 @@ import {
   EFFECT_PRESETS,
   LUT_PRESETS,
 } from '../engine/colorEngine';
-import { getPiPLayoutTransform } from '../engine/timelineOps';
+import {
+  evaluateKeyframeValue,
+  getPiPLayoutTransform,
+  setClipKeyframeValue,
+  toggleClipKeyframe,
+} from '../engine/timelineOps';
 import {
   AudioTonePreset,
   BlendMode,
   ClipEffects,
   ClipTransform,
   ColorGrade,
+  KeyframeProperty,
   LUTPresetId,
   MaskShape,
   MirrorEffectMode,
@@ -42,12 +52,15 @@ import { ScopesPanel } from './ScopesPanel';
 
 interface InspectorPanelProps {
   selectedClip: TimelineClip | null;
+  currentTime?: number;
   scopes: ScopeData | null;
   copiedGrade: ColorGrade | null;
   copiedEffects?: ClipEffects | null;
   activeTab: 'effects' | 'color' | 'text' | 'scopes';
   onTabChange: (tab: 'effects' | 'color' | 'text' | 'scopes') => void;
+  onSeek?: (time: number) => void;
   onUpdateClip: (clipId: string, updater: (clip: TimelineClip) => TimelineClip) => void;
+  onToggleClipDisabled?: (clipId: string) => void;
   onAutoBalanceClip: (clipId: string) => void;
   onChangeClipSpeed: (clipId: string, speed: number) => void;
   onFreezeClip?: (clipId: string) => void;
@@ -67,6 +80,9 @@ interface SliderRowProps {
   unit?: string;
   defaultValue?: number;
   onChange: (val: number) => void;
+  keyframeCount?: number;
+  hasKeyframeHere?: boolean;
+  onToggleKeyframe?: () => void;
 }
 
 const SliderRow: React.FC<SliderRowProps> = ({
@@ -78,18 +94,47 @@ const SliderRow: React.FC<SliderRowProps> = ({
   unit = '',
   defaultValue = 0,
   onChange,
+  keyframeCount = 0,
+  hasKeyframeHere = false,
+  onToggleKeyframe,
 }) => (
   <div className="space-y-1">
-    <div className="flex items-center justify-between text-[11px]">
-      <button
-        type="button"
-        onDoubleClick={() => onChange(defaultValue)}
-        title="Double-click label to reset"
-        className="text-[#A8AEB8] hover:text-white text-left cursor-pointer"
-      >
-        {label}
-      </button>
-      <span className="font-mono-tabular text-[#D1D5DB]">
+    <div className="flex items-center justify-between text-[11px] gap-1">
+      <div className="flex items-center gap-1 min-w-0">
+        {onToggleKeyframe && (
+          <button
+            type="button"
+            onClick={onToggleKeyframe}
+            title={
+              hasKeyframeHere
+                ? `Remove Keyframe on ${label}`
+                : keyframeCount > 0
+                ? `Add Keyframe on ${label} (${keyframeCount} active)`
+                : `Animate ${label} (Add Keyframe)`
+            }
+            aria-label={`Keyframe ${label}`}
+            aria-pressed={hasKeyframeHere || keyframeCount > 0}
+            className={`p-0.5 rounded-xs cursor-pointer transition-colors shrink-0 ${
+              hasKeyframeHere
+                ? 'text-[#F59E0B] bg-[#F59E0B]/15'
+                : keyframeCount > 0
+                ? 'text-[#60A5FA]'
+                : 'text-[#6B7280] hover:text-white'
+            }`}
+          >
+            <Diamond className="w-2.5 h-2.5 fill-current" />
+          </button>
+        )}
+        <button
+          type="button"
+          onDoubleClick={() => onChange(defaultValue)}
+          title="Double-click label to reset"
+          className="text-[#A8AEB8] hover:text-white text-left cursor-pointer truncate"
+        >
+          {label}
+        </button>
+      </div>
+      <span className="font-mono-tabular text-[#D1D5DB] shrink-0">
         {step < 1 ? value.toFixed(2) : Math.round(value)}
         {unit}
       </span>
@@ -178,12 +223,15 @@ const QUICK_TRANSITIONS: { id: TransitionType; label: string }[] = [
 
 export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   selectedClip,
+  currentTime = 0,
   scopes,
   copiedGrade,
   copiedEffects,
   activeTab,
   onTabChange,
+  onSeek,
   onUpdateClip,
+  onToggleClipDisabled,
   onAutoBalanceClip,
   onChangeClipSpeed,
   onFreezeClip,
@@ -195,6 +243,10 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 }) => {
   const effectiveTab =
     selectedClip?.kind === 'title' && activeTab === 'color' ? 'text' : activeTab;
+
+  const clipLocalTime = selectedClip
+    ? Math.max(0, Math.min(selectedClip.duration, Number((currentTime - selectedClip.startTime).toFixed(3))))
+    : 0;
 
   const updateColor = (patch: Partial<ColorGrade>) => {
     if (!selectedClip) return;
@@ -211,6 +263,43 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
       transform: { ...c.transform, ...patch },
     }));
   };
+
+  const updateAnimatedTransformProp = (prop: KeyframeProperty, value: number) => {
+    if (!selectedClip) return;
+    onUpdateClip(selectedClip.id, (c) => {
+      const existingList = c.keyframes?.[prop] ?? [];
+      const nextKfs =
+        existingList.length > 0
+          ? setClipKeyframeValue(c.keyframes, prop, clipLocalTime, value, 'ease')
+          : c.keyframes;
+      return {
+        ...c,
+        transform: { ...c.transform, [prop]: value },
+        keyframes: nextKfs,
+      };
+    });
+  };
+
+  const handleToggleKf = (prop: KeyframeProperty) => {
+    if (!selectedClip) return;
+    const currentVal = evaluateKeyframeValue(
+      selectedClip.keyframes?.[prop],
+      clipLocalTime,
+      selectedClip.transform[prop]
+    );
+    onUpdateClip(selectedClip.id, (c) => ({
+      ...c,
+      keyframes: toggleClipKeyframe(c.keyframes, prop, clipLocalTime, currentVal, 'ease'),
+    }));
+  };
+
+  const getKfCount = (prop: KeyframeProperty) => selectedClip?.keyframes?.[prop]?.length ?? 0;
+  const hasKfHere = (prop: KeyframeProperty) =>
+    Boolean(selectedClip?.keyframes?.[prop]?.some((k) => Math.abs(k.time - clipLocalTime) < 0.06));
+  const getAnimatedValue = (prop: KeyframeProperty) =>
+    selectedClip
+      ? evaluateKeyframeValue(selectedClip.keyframes?.[prop], clipLocalTime, selectedClip.transform[prop])
+      : 0;
 
   const updateEffects = (patch: Partial<ClipEffects>) => {
     if (!selectedClip) return;
@@ -314,9 +403,24 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             <span className="text-[11px] font-medium text-[#E5E7EB] truncate">
               {selectedClip.name}
             </span>
-            <span className="text-[10px] font-mono-tabular text-[#7D838F] uppercase shrink-0">
-              {selectedClip.kind}
-            </span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {onToggleClipDisabled && (
+                <button
+                  type="button"
+                  onClick={() => onToggleClipDisabled(selectedClip.id)}
+                  title={selectedClip.disabled ? 'Enable Clip (E)' : 'Disable Clip (E)'}
+                  aria-label={selectedClip.disabled ? 'Enable Selected Clip' : 'Disable Selected Clip'}
+                  className={`p-1 rounded-xs cursor-pointer ${
+                    selectedClip.disabled ? 'text-[#F59E0B]' : 'text-[#8E939E] hover:text-white'
+                  }`}
+                >
+                  {selectedClip.disabled ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                </button>
+              )}
+              <span className="text-[10px] font-mono-tabular text-[#7D838F] uppercase shrink-0">
+                {selectedClip.kind}
+              </span>
+            </div>
           </>
         ) : (
           <span className="text-[11px] text-[#6B7280]">
@@ -762,6 +866,133 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 </div>
               </div>
 
+              {selectedClip.kind === 'adjustment' && (
+                <div className="px-2.5 py-2 bg-[#231D33] border border-[#5B3E9E]/50 rounded text-[11px] text-[#DDD6FE]">
+                  Adjustment Layer active: all Color Looks and Visual Filters applied to this clip affect every track below it.
+                </div>
+              )}
+
+              {selectedClip.kind === 'matte' && (
+                <div className="p-2 bg-[#101115] border border-[#262930] rounded space-y-2">
+                  <span className="block text-[11px] font-medium text-[#D1D5DB]">
+                    Background Matte Colors
+                  </span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="flex items-center justify-between bg-[#0B0C0F] border border-[#262930] rounded px-2 py-1 text-[10px] text-[#A8AEB8]">
+                      <span>Start</span>
+                      <input
+                        type="color"
+                        aria-label="Matte Start Color"
+                        value={selectedClip.matteColor ?? '#1e3a8a'}
+                        onChange={(e) =>
+                          onUpdateClip(selectedClip.id, (c) => ({ ...c, matteColor: e.target.value }))
+                        }
+                        className="w-5 h-5 bg-transparent border-0 cursor-pointer"
+                      />
+                    </label>
+                    <label className="flex items-center justify-between bg-[#0B0C0F] border border-[#262930] rounded px-2 py-1 text-[10px] text-[#A8AEB8]">
+                      <span>Gradient End</span>
+                      <input
+                        type="color"
+                        aria-label="Matte End Color"
+                        value={selectedClip.matteSecondaryColor ?? selectedClip.matteColor ?? '#0f172a'}
+                        onChange={(e) =>
+                          onUpdateClip(selectedClip.id, (c) => ({
+                            ...c,
+                            matteSecondaryColor: e.target.value,
+                          }))
+                        }
+                        className="w-5 h-5 bg-transparent border-0 cursor-pointer"
+                      />
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-4 gap-1">
+                    {[
+                      { label: 'Midnight', c1: '#1e3a8a', c2: '#0f172a' },
+                      { label: 'Sunset', c1: '#ea580c', c2: '#7c2d12' },
+                      { label: 'Slate', c1: '#374151', c2: '#111827' },
+                      { label: 'Chroma', c1: '#00b140', c2: '#00b140' },
+                    ].map((swatch) => (
+                      <button
+                        key={swatch.label}
+                        type="button"
+                        onClick={() =>
+                          onUpdateClip(selectedClip.id, (c) => ({
+                            ...c,
+                            matteColor: swatch.c1,
+                            matteSecondaryColor: swatch.c2,
+                          }))
+                        }
+                        className="py-1 text-[9px] text-[#D1D5DB] bg-[#181A20] hover:bg-[#252A34] border border-[#282B33] rounded cursor-pointer"
+                      >
+                        {swatch.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Motion Keyframe Timeline Header */}
+              <div className="flex items-center justify-between px-2 py-1.5 bg-[#101115] border border-[#252830] rounded text-[10px]">
+                <span className="text-[#9CA3AF]">
+                  Keyframes @ <span className="font-mono-tabular text-white">{clipLocalTime.toFixed(2)}s</span>
+                </span>
+                <div className="flex items-center gap-1">
+                  {onSeek && (
+                    <>
+                      <button
+                        type="button"
+                        title="Previous Keyframe"
+                        aria-label="Jump to Previous Keyframe"
+                        onClick={() => {
+                          const allTimes = Array.from(
+                            new Set(
+                              Object.values(selectedClip.keyframes ?? {})
+                                .flatMap((arr) => arr ?? [])
+                                .map((k) => k.time)
+                            )
+                          ).sort((a, b) => a - b);
+                          const prev = [...allTimes].reverse().find((t) => t < clipLocalTime - 0.05);
+                          if (prev !== undefined) onSeek(selectedClip.startTime + prev);
+                        }}
+                        className="p-0.5 text-[#9CA3AF] hover:text-white cursor-pointer"
+                      >
+                        <ChevronLeft className="w-3 h-3" />
+                      </button>
+                      <button
+                        type="button"
+                        title="Next Keyframe"
+                        aria-label="Jump to Next Keyframe"
+                        onClick={() => {
+                          const allTimes = Array.from(
+                            new Set(
+                              Object.values(selectedClip.keyframes ?? {})
+                                .flatMap((arr) => arr ?? [])
+                                .map((k) => k.time)
+                            )
+                          ).sort((a, b) => a - b);
+                          const next = allTimes.find((t) => t > clipLocalTime + 0.05);
+                          if (next !== undefined) onSeek(selectedClip.startTime + next);
+                        }}
+                        className="p-0.5 text-[#9CA3AF] hover:text-white cursor-pointer"
+                      >
+                        <ChevronRight className="w-3 h-3" />
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onUpdateClip(selectedClip.id, (c) => ({ ...c, keyframes: undefined }))
+                    }
+                    title="Clear All Motion Keyframes"
+                    className="px-1.5 py-0.5 text-[9px] text-[#9CA3AF] hover:text-white bg-[#181A20] border border-[#282B33] rounded-xs cursor-pointer"
+                  >
+                    Clear KFs
+                  </button>
+                </div>
+              </div>
+
               <div className="flex items-center gap-2 pt-1">
                 <button
                   type="button"
@@ -792,36 +1023,48 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               </div>
               <SliderRow
                 label="Move Left / Right"
-                value={selectedClip.transform.x}
+                value={getAnimatedValue('x')}
                 min={-640}
                 max={640}
                 unit=" px"
-                onChange={(v) => updateTransform({ x: v })}
+                keyframeCount={getKfCount('x')}
+                hasKeyframeHere={hasKfHere('x')}
+                onToggleKeyframe={() => handleToggleKf('x')}
+                onChange={(v) => updateAnimatedTransformProp('x', v)}
               />
               <SliderRow
                 label="Move Up / Down"
-                value={selectedClip.transform.y}
+                value={getAnimatedValue('y')}
                 min={-360}
                 max={360}
                 unit=" px"
-                onChange={(v) => updateTransform({ y: v })}
+                keyframeCount={getKfCount('y')}
+                hasKeyframeHere={hasKfHere('y')}
+                onToggleKeyframe={() => handleToggleKf('y')}
+                onChange={(v) => updateAnimatedTransformProp('y', v)}
               />
               <SliderRow
                 label="Zoom Size"
-                value={selectedClip.transform.scale}
+                value={getAnimatedValue('scale')}
                 min={10}
                 max={250}
                 unit="%"
                 defaultValue={100}
-                onChange={(v) => updateTransform({ scale: v })}
+                keyframeCount={getKfCount('scale')}
+                hasKeyframeHere={hasKfHere('scale')}
+                onToggleKeyframe={() => handleToggleKf('scale')}
+                onChange={(v) => updateAnimatedTransformProp('scale', v)}
               />
               <SliderRow
                 label="Rotate"
-                value={selectedClip.transform.rotation}
+                value={getAnimatedValue('rotation')}
                 min={-180}
                 max={180}
                 unit="°"
-                onChange={(v) => updateTransform({ rotation: v })}
+                keyframeCount={getKfCount('rotation')}
+                hasKeyframeHere={hasKfHere('rotation')}
+                onToggleKeyframe={() => handleToggleKf('rotation')}
+                onChange={(v) => updateAnimatedTransformProp('rotation', v)}
               />
               <div className="space-y-1 pt-0.5">
                 <label className="block text-[11px] text-[#A8AEB8]">Camera Motion</label>
@@ -850,6 +1093,116 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 max={25}
                 unit="%"
                 onChange={(v) => updateTransform({ kenBurnsZoom: v })}
+              />
+            </CollapsibleSection>
+
+            <CollapsibleSection
+              title="Chroma Key (Green / Blue Screen)"
+              defaultOpen={false}
+              onReset={() =>
+                updateEffects({
+                  chromaKey: { enabled: false, color: '#00b140', similarity: 34, smoothness: 14 },
+                })
+              }
+            >
+              <label className="flex items-center justify-between cursor-pointer">
+                <span className="text-[11px] text-[#D1D5DB] font-medium">Enable Chroma Key</span>
+                <input
+                  type="checkbox"
+                  checked={Boolean(clipEffects.chromaKey?.enabled)}
+                  onChange={(e) =>
+                    updateEffects({
+                      chromaKey: {
+                        color: clipEffects.chromaKey?.color ?? '#00b140',
+                        similarity: clipEffects.chromaKey?.similarity ?? 34,
+                        smoothness: clipEffects.chromaKey?.smoothness ?? 14,
+                        enabled: e.target.checked,
+                      },
+                    })
+                  }
+                  className="accent-[#10B981] cursor-pointer"
+                />
+              </label>
+
+              <div className="flex items-center justify-between gap-1.5 pt-1">
+                <div className="flex items-center gap-1">
+                  {[
+                    { label: 'Green', color: '#00b140' },
+                    { label: 'Blue', color: '#0047bb' },
+                    { label: 'Black', color: '#000000' },
+                  ].map((kc) => (
+                    <button
+                      key={kc.label}
+                      type="button"
+                      onClick={() =>
+                        updateEffects({
+                          chromaKey: {
+                            enabled: true,
+                            color: kc.color,
+                            similarity: clipEffects.chromaKey?.similarity ?? 34,
+                            smoothness: clipEffects.chromaKey?.smoothness ?? 14,
+                          },
+                        })
+                      }
+                      className="px-2 py-1 text-[10px] text-[#D1D5DB] hover:text-white bg-[#101114] border border-[#262930] rounded cursor-pointer"
+                    >
+                      {kc.label}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="color"
+                  aria-label="Key Screen Color"
+                  value={clipEffects.chromaKey?.color ?? '#00b140'}
+                  onChange={(e) =>
+                    updateEffects({
+                      chromaKey: {
+                        enabled: true,
+                        color: e.target.value,
+                        similarity: clipEffects.chromaKey?.similarity ?? 34,
+                        smoothness: clipEffects.chromaKey?.smoothness ?? 14,
+                      },
+                    })
+                  }
+                  className="w-6 h-6 bg-transparent border border-[#2B2F3A] rounded cursor-pointer shrink-0"
+                />
+              </div>
+
+              <SliderRow
+                label="Color Match Tolerance"
+                value={clipEffects.chromaKey?.similarity ?? 34}
+                min={5}
+                max={85}
+                unit="%"
+                defaultValue={34}
+                onChange={(v) =>
+                  updateEffects({
+                    chromaKey: {
+                      enabled: clipEffects.chromaKey?.enabled ?? true,
+                      color: clipEffects.chromaKey?.color ?? '#00b140',
+                      similarity: v,
+                      smoothness: clipEffects.chromaKey?.smoothness ?? 14,
+                    },
+                  })
+                }
+              />
+              <SliderRow
+                label="Edge Softness"
+                value={clipEffects.chromaKey?.smoothness ?? 14}
+                min={0}
+                max={45}
+                unit="%"
+                defaultValue={14}
+                onChange={(v) =>
+                  updateEffects({
+                    chromaKey: {
+                      enabled: clipEffects.chromaKey?.enabled ?? true,
+                      color: clipEffects.chromaKey?.color ?? '#00b140',
+                      similarity: clipEffects.chromaKey?.similarity ?? 34,
+                      smoothness: v,
+                    },
+                  })
+                }
               />
             </CollapsibleSection>
 
@@ -1210,12 +1563,15 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             >
               <SliderRow
                 label="Opacity"
-                value={selectedClip.transform.opacity}
+                value={getAnimatedValue('opacity')}
                 min={0}
                 max={100}
                 unit="%"
                 defaultValue={100}
-                onChange={(v) => updateTransform({ opacity: v })}
+                keyframeCount={getKfCount('opacity')}
+                hasKeyframeHere={hasKfHere('opacity')}
+                onToggleKeyframe={() => handleToggleKf('opacity')}
+                onChange={(v) => updateAnimatedTransformProp('opacity', v)}
               />
               <div className="space-y-1">
                 <label className="block text-[11px] text-[#A8AEB8]">Blend Mode</label>
@@ -1309,8 +1665,27 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   onUpdateClip(selectedClip.id, (c) => ({ ...c, gainDb: v }))
                 }
               />
+              <div className="grid grid-cols-4 gap-1">
+                {[
+                  { label: 'Mute', db: -36 },
+                  { label: 'Duck -10', db: -10 },
+                  { label: '0 dB', db: 0 },
+                  { label: '+4 dB', db: 4 },
+                ].map((vol) => (
+                  <button
+                    key={vol.label}
+                    type="button"
+                    onClick={() =>
+                      onUpdateClip(selectedClip.id, (c) => ({ ...c, gainDb: vol.db }))
+                    }
+                    className="py-1 text-[10px] text-[#C7CBD4] hover:text-white bg-[#101114] border border-[#262930] rounded cursor-pointer"
+                  >
+                    {vol.label}
+                  </button>
+                ))}
+              </div>
               {selectedClip.kind === 'audio' && (
-                <div className="space-y-1">
+                <div className="space-y-1 pt-1">
                   <label className="block text-[11px] text-[#A8AEB8]">Audio Tone Preset</label>
                   <select
                     aria-label="Audio Tone Preset"

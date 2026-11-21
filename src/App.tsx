@@ -34,10 +34,12 @@ import {
   closeTrackGaps,
   deleteClip,
   duplicateClip,
+  getAdjacentCutTime,
   getSequenceDimensionsForRatio,
   getSequenceDuration,
   moveClip,
   nudgeClip,
+  pasteClipAtTime,
   splitAllAtTime,
   splitClipAtTime,
   trimClip,
@@ -45,6 +47,7 @@ import {
 } from './engine/timelineOps';
 import {
   AudioTonePreset,
+  ClipEffects,
   ClipTransform,
   ColorGrade,
   MediaAsset,
@@ -69,6 +72,7 @@ export default function App() {
   const [showGrid, setShowGrid] = useState(false);
   const [showDualMonitor, setShowDualMonitor] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
 
   const [currentTime, setCurrentTime] = useState(0.5);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -79,6 +83,8 @@ export default function App() {
   const [selectedClipId, setSelectedClipId] = useState<string | null>('clip_1');
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>('asset_street');
   const [copiedGrade, setCopiedGrade] = useState<ColorGrade | null>(null);
+  const [copiedEffects, setCopiedEffects] = useState<ClipEffects | null>(null);
+  const [copiedClip, setCopiedClip] = useState<TimelineClip | null>(null);
   const [scopes, setScopes] = useState<ScopeData | null>(null);
   const [mediaRevision, setMediaRevision] = useState(0);
 
@@ -646,10 +652,70 @@ export default function App() {
         return;
       }
 
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+      const mod = e.metaKey || e.ctrlKey;
+      const lower = e.key.toLowerCase();
+
+      if (mod && lower === 'z') {
         e.preventDefault();
         if (e.shiftKey) handleRedo();
         else handleUndo();
+        return;
+      }
+
+      if (mod && lower === 'k') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          handleSplitAllAtPlayhead();
+        } else if (selectedClipId) {
+          handleSplitClip(selectedClipId, currentTime);
+        }
+        return;
+      }
+
+      if (mod && lower === 'd' && selectedClipId) {
+        e.preventDefault();
+        handleDuplicateClip(selectedClipId);
+        return;
+      }
+
+      if (mod && lower === 'c' && selectedClip) {
+        e.preventDefault();
+        setCopiedClip(structuredClone(selectedClip));
+        return;
+      }
+
+      if (mod && lower === 'v' && copiedClip) {
+        e.preventDefault();
+        let nextId = selectedClipId;
+        commitProject((prev) => {
+          const res = pasteClipAtTime(prev.clips, copiedClip, currentTime);
+          nextId = res.newClipId;
+          return { ...prev, clips: res.clips };
+        });
+        if (nextId) setSelectedClipId(nextId);
+        return;
+      }
+
+      if (mod && lower === 'm') {
+        e.preventDefault();
+        setIsMuted((m) => !m);
+        return;
+      }
+
+      if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+        e.preventDefault();
+        setShowShortcuts((s) => !s);
+        return;
+      }
+
+      if (e.key === 'Escape') {
+        if (showShortcuts) {
+          setShowShortcuts(false);
+        } else if (isExportOpen) {
+          setIsExportOpen(false);
+        } else {
+          setSelectedClipId(null);
+        }
         return;
       }
 
@@ -657,6 +723,22 @@ export default function App() {
         e.preventDefault();
         setPlaybackRate(1);
         setIsPlaying((p) => !p);
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        setIsPlaying(false);
+        setCurrentTime(0);
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        setIsPlaying(false);
+        setCurrentTime(sequenceDuration);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setIsPlaying(false);
+        setCurrentTime(getAdjacentCutTime(project.clips, project.markers, currentTime, 'prev'));
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setIsPlaying(false);
+        setCurrentTime(getAdjacentCutTime(project.clips, project.markers, currentTime, 'next'));
       } else if (e.key === 'ArrowLeft') {
         e.preventDefault();
         if (e.altKey && selectedClipId) {
@@ -664,6 +746,9 @@ export default function App() {
             ...prev,
             clips: nudgeClip(prev.clips, selectedClipId, -0.25, prev.tracks),
           }));
+        } else if (e.shiftKey) {
+          setIsPlaying(false);
+          setCurrentTime((t) => Math.max(0, t - 1));
         } else {
           setIsPlaying(false);
           setCurrentTime((t) => stepFrames(t, -1, project.sequence.fps));
@@ -675,37 +760,42 @@ export default function App() {
             ...prev,
             clips: nudgeClip(prev.clips, selectedClipId, 0.25, prev.tracks),
           }));
+        } else if (e.shiftKey) {
+          setIsPlaying(false);
+          setCurrentTime((t) => Math.min(sequenceDuration, t + 1));
         } else {
           setIsPlaying(false);
           setCurrentTime((t) => stepFrames(t, 1, project.sequence.fps));
         }
-      } else if (e.key.toLowerCase() === 'j') {
+      } else if (lower === 'j') {
         setPlaybackRate(-2);
         setIsPlaying(true);
-      } else if (e.key.toLowerCase() === 'k') {
+      } else if (lower === 'k') {
         setIsPlaying(false);
         setPlaybackRate(1);
-      } else if (e.key.toLowerCase() === 'l') {
+      } else if (lower === 'l') {
         setPlaybackRate(2);
         setIsPlaying(true);
-      } else if (e.key.toLowerCase() === 'v') {
+      } else if (lower === 'v') {
         setActiveTool('select');
-      } else if (e.key.toLowerCase() === 'c') {
+      } else if (lower === 'c') {
         setActiveTool('razor');
-      } else if (e.key.toLowerCase() === 'b') {
+      } else if (lower === 'b') {
         setActiveTool('trim');
-      } else if (e.key.toLowerCase() === 'h') {
+      } else if (lower === 'h') {
         setActiveTool('hand');
-      } else if (e.key.toLowerCase() === 's') {
+      } else if (lower === 't') {
+        handleAddTitleClip('hero');
+      } else if (lower === 's') {
         setSnapEnabled((s) => !s);
-      } else if (e.key.toLowerCase() === 'm') {
+      } else if (lower === 'm') {
         handleAddMarker();
-      } else if (e.key.toLowerCase() === 'i') {
+      } else if (lower === 'i') {
         setProject((p) => ({
           ...p,
           sequence: { ...p.sequence, inPoint: currentTime },
         }));
-      } else if (e.key.toLowerCase() === 'o') {
+      } else if (lower === 'o') {
         setProject((p) => ({
           ...p,
           sequence: { ...p.sequence, outPoint: currentTime },
@@ -719,13 +809,25 @@ export default function App() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [
+    commitProject,
+    copiedClip,
     currentTime,
     handleAddMarker,
+    handleAddTitleClip,
     handleDeleteClip,
+    handleDuplicateClip,
     handleRedo,
+    handleSplitAllAtPlayhead,
+    handleSplitClip,
     handleUndo,
+    isExportOpen,
+    project.clips,
+    project.markers,
     project.sequence.fps,
+    selectedClip,
     selectedClipId,
+    sequenceDuration,
+    showShortcuts,
   ]);
 
   return (
@@ -753,6 +855,8 @@ export default function App() {
         onToggleSafeGuides={() => setShowSafeGuides((v) => !v)}
         showGrid={showGrid}
         onToggleGrid={() => setShowGrid((v) => !v)}
+        showShortcuts={showShortcuts}
+        onToggleShortcuts={() => setShowShortcuts((s) => !s)}
         onResetProject={handleResetProject}
         onSaveProjectFile={() => {
           const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
@@ -950,6 +1054,7 @@ export default function App() {
             selectedClip={selectedClip}
             scopes={scopes}
             copiedGrade={copiedGrade}
+            copiedEffects={copiedEffects}
             activeTab={inspectorTab}
             onTabChange={setInspectorTab}
             onUpdateClip={handleUpdateClip}
@@ -968,6 +1073,16 @@ export default function App() {
                 ...prev,
                 clips: prev.clips.map((c) =>
                   c.id === clipId ? { ...c, color: structuredClone(copiedGrade) } : c
+                ),
+              }));
+            }}
+            onCopyEffects={(effects) => setCopiedEffects(structuredClone(effects))}
+            onPasteEffects={(clipId) => {
+              if (!copiedEffects) return;
+              commitProject((prev) => ({
+                ...prev,
+                clips: prev.clips.map((c) =>
+                  c.id === clipId ? { ...c, effects: structuredClone(copiedEffects) } : c
                 ),
               }));
             }}

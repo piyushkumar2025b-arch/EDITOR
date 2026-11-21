@@ -11,7 +11,11 @@ export type LUTPresetId =
   | 'fuji-eterna'
   | 'monochrome-noir'
   | 'bleach-bypass'
-  | 'golden-hour';
+  | 'golden-hour'
+  | 'cyberpunk-neon'
+  | 'pastel-dream'
+  | 'vintage-polaroid'
+  | 'emerald-forest';
 
 export type BlendMode = 'source-over' | 'screen' | 'multiply' | 'overlay' | 'soft-light';
 
@@ -22,9 +26,18 @@ export type TransitionType =
   | 'fade-white'
   | 'wipe-left'
   | 'wipe-right'
+  | 'wipe-up'
+  | 'wipe-down'
   | 'slide-left'
   | 'slide-right'
-  | 'zoom-in';
+  | 'slide-up'
+  | 'slide-down'
+  | 'zoom-in'
+  | 'zoom-out'
+  | 'spin-in'
+  | 'iris-circle'
+  | 'split-open'
+  | 'flash-blur';
 
 export type MotionPreset =
   | 'none'
@@ -36,13 +49,23 @@ export type MotionPreset =
   | 'tilt-drift'
   | 'pulse';
 
-export type PiPLayoutPreset = 'full' | 'pip-tr' | 'pip-tl' | 'split-left' | 'split-right';
+export type PiPLayoutPreset =
+  | 'full'
+  | 'pip-tr'
+  | 'pip-tl'
+  | 'split-left'
+  | 'split-right'
+  | 'pip-circle';
+
+export type MaskShape = 'rect' | 'circle' | 'pill' | 'diamond';
+
+export type MirrorEffectMode = 'none' | 'mirror-h' | 'mirror-v' | 'kaleidoscope';
 
 export type CropAspectPreset = 'original' | '16:9' | '4:3' | '1:1' | '4:5' | '9:16';
 
 export type SequenceAspectPreset = '16:9' | '9:16' | '1:1' | '4:5';
 
-export type AudioTonePreset = 'normal' | 'voice' | 'warm-bass' | 'radio';
+export type AudioTonePreset = 'normal' | 'voice' | 'podcast' | 'warm-bass' | 'radio' | 'megaphone';
 
 export type TextFontFamily = 'sans' | 'serif' | 'mono';
 
@@ -101,6 +124,14 @@ export interface ClipEffects {
   borderWidth?: number; // 0..24 px
   borderColor?: string;
   dropShadow?: number; // 0..40 px blur
+  chromatic?: number; // 0..100 % RGB split
+  posterize?: number; // 0 = off, 2..12 color levels
+  threshold?: number; // 0 = off, 1..100 ink cutoff
+  lightLeak?: number; // 0..100 % warm film flare
+  scanlines?: number; // 0..100 % retro VHS lines
+  tiltShift?: number; // 0..100 % soft top/bottom blur focus
+  mirrorMode?: MirrorEffectMode;
+  maskShape?: MaskShape;
 }
 
 export interface ClipTransform {

@@ -9,6 +9,11 @@ function applyToneToGainAndFilter(
     filter.type = 'highpass';
     filter.frequency.value = 180;
     filter.Q.value = 0.8;
+  } else if (preset === 'podcast') {
+    filter.type = 'peaking';
+    filter.frequency.value = 2400;
+    filter.Q.value = 1.0;
+    filter.gain.value = 4.5;
   } else if (preset === 'warm-bass') {
     filter.type = 'lowshelf';
     filter.frequency.value = 240;
@@ -17,6 +22,10 @@ function applyToneToGainAndFilter(
     filter.type = 'bandpass';
     filter.frequency.value = 1350;
     filter.Q.value = 1.6;
+  } else if (preset === 'megaphone') {
+    filter.type = 'bandpass';
+    filter.frequency.value = 2100;
+    filter.Q.value = 2.4;
   } else {
     filter.type = 'allpass';
     filter.frequency.value = 1000;

@@ -7,7 +7,10 @@ import {
   computeScopesFromImageData,
   createDefaultColorGrade,
   DEFAULT_EFFECTS,
+  EFFECT_PRESETS,
   isColorGradeIdentity,
+  isEffectsIdentity,
+  LUT_PRESETS,
   PHOTO_STYLE_PRESETS,
 } from './colorEngine';
 
@@ -47,7 +50,9 @@ test('sepia and vintageFade visual filters warm tones and lift black floor', () 
   const neutral = new Uint8ClampedArray([120, 120, 120, 255]);
   applyColorGradeToImageData(neutral, grade, { ...DEFAULT_EFFECTS, sepia: 100 });
   assert.ok(neutral[0] > neutral[1] && neutral[1] > neutral[2]);
-  assert.ok(PHOTO_STYLE_PRESETS.length >= 6);
+  assert.ok(PHOTO_STYLE_PRESETS.length >= 10);
+  assert.ok(LUT_PRESETS.length >= 11);
+  assert.ok(EFFECT_PRESETS.length >= 8);
 });
 
 test('buildToneCurveLUT preserves endpoints and lifts midtones when midpoint raised', () => {
@@ -104,5 +109,41 @@ test('hueShift, dehaze, and invert filters modify pixel data deterministically',
   assert.equal(invPixels[0], 215);
   assert.equal(invPixels[1], 155);
   assert.equal(invPixels[2], 55);
-  assert.ok(PHOTO_STYLE_PRESETS.length >= 8);
+});
+
+test('posterize, threshold, and chromatic aberration effects transform image data accurately', () => {
+  assert.equal(isEffectsIdentity(DEFAULT_EFFECTS), true);
+  assert.equal(isEffectsIdentity({ ...DEFAULT_EFFECTS, chromatic: 40 }), false);
+
+  const post = new Uint8ClampedArray([90, 140, 210, 255]);
+  applyColorGradeToImageData(post, createDefaultColorGrade(), {
+    ...DEFAULT_EFFECTS,
+    posterize: 2,
+  });
+  assert.ok(post[0] === 0 && post[1] === 255 && post[2] === 255);
+
+  const ink = new Uint8ClampedArray([180, 180, 180, 255, 40, 40, 40, 255]);
+  applyColorGradeToImageData(ink, createDefaultColorGrade(), {
+    ...DEFAULT_EFFECTS,
+    threshold: 50,
+  });
+  assert.equal(ink[0], 255);
+  assert.equal(ink[4], 0);
+
+  // 4px wide row: bright red at x=0 shifts right onto x=2..3? R samples x-shift, B samples x+shift
+  const row = new Uint8ClampedArray([
+    255, 0, 0, 255,
+    0, 0, 0, 255,
+    0, 0, 0, 255,
+    0, 0, 200, 255,
+  ]);
+  applyColorGradeToImageData(
+    row,
+    createDefaultColorGrade(),
+    { ...DEFAULT_EFFECTS, chromatic: 10 },
+    4
+  );
+  // x=1 samples red from x=0 (red shifts right) and x=2 samples blue from x=3 (blue shifts left)
+  assert.equal(row[4], 255);
+  assert.equal(row[10], 200);
 });

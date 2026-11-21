@@ -14,6 +14,7 @@ import {
   createDefaultColorGrade,
   DEFAULT_EFFECTS,
   DEFAULT_TRANSFORM,
+  EFFECT_PRESETS,
   LUT_PRESETS,
 } from '../engine/colorEngine';
 import { getPiPLayoutTransform } from '../engine/timelineOps';
@@ -24,6 +25,8 @@ import {
   ClipTransform,
   ColorGrade,
   LUTPresetId,
+  MaskShape,
+  MirrorEffectMode,
   MotionPreset,
   PiPLayoutPreset,
   ScopeData,
@@ -41,6 +44,7 @@ interface InspectorPanelProps {
   selectedClip: TimelineClip | null;
   scopes: ScopeData | null;
   copiedGrade: ColorGrade | null;
+  copiedEffects?: ClipEffects | null;
   activeTab: 'effects' | 'color' | 'text' | 'scopes';
   onTabChange: (tab: 'effects' | 'color' | 'text' | 'scopes') => void;
   onUpdateClip: (clipId: string, updater: (clip: TimelineClip) => TimelineClip) => void;
@@ -49,6 +53,8 @@ interface InspectorPanelProps {
   onFreezeClip?: (clipId: string) => void;
   onCopyGrade: (grade: ColorGrade) => void;
   onPasteGrade: (clipId: string) => void;
+  onCopyEffects?: (effects: ClipEffects) => void;
+  onPasteEffects?: (clipId: string) => void;
   onApplyGradeToAll?: (grade: ColorGrade) => void;
 }
 
@@ -145,20 +151,36 @@ const LUT_SWATCHES: Record<LUTPresetId, string> = {
   'monochrome-noir': 'linear-gradient(135deg, #e5e7eb, #111827)',
   'bleach-bypass': 'linear-gradient(135deg, #9ca3af, #0f172a)',
   'golden-hour': 'linear-gradient(135deg, #f59e0b, #78350f)',
+  'cyberpunk-neon': 'linear-gradient(135deg, #ec4899, #06b6d4)',
+  'pastel-dream': 'linear-gradient(135deg, #fbcfe8, #93c5fd)',
+  'vintage-polaroid': 'linear-gradient(135deg, #fde68a, #047857)',
+  'emerald-forest': 'linear-gradient(135deg, #10b981, #064e3b)',
 };
 
 const PIP_PRESETS: { id: PiPLayoutPreset; label: string }[] = [
-  { id: 'full', label: 'Full' },
-  { id: 'pip-tr', label: 'PiP R' },
-  { id: 'pip-tl', label: 'PiP L' },
-  { id: 'split-left', label: 'Split L' },
-  { id: 'split-right', label: 'Split R' },
+  { id: 'full', label: 'Full Screen' },
+  { id: 'pip-tr', label: 'Corner Right' },
+  { id: 'pip-tl', label: 'Corner Left' },
+  { id: 'pip-circle', label: 'Circle Facecam' },
+  { id: 'split-left', label: 'Split Left' },
+  { id: 'split-right', label: 'Split Right' },
+];
+
+const QUICK_TRANSITIONS: { id: TransitionType; label: string }[] = [
+  { id: 'cross-dissolve', label: 'Fade' },
+  { id: 'dip-black', label: 'Black' },
+  { id: 'iris-circle', label: 'Circle' },
+  { id: 'split-open', label: 'Curtain' },
+  { id: 'spin-in', label: 'Spin' },
+  { id: 'zoom-in', label: 'Zoom' },
+  { id: 'flash-blur', label: 'Flash' },
 ];
 
 export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   selectedClip,
   scopes,
   copiedGrade,
+  copiedEffects,
   activeTab,
   onTabChange,
   onUpdateClip,
@@ -167,6 +189,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   onFreezeClip,
   onCopyGrade,
   onPasteGrade,
+  onCopyEffects,
+  onPasteEffects,
   onApplyGradeToAll,
 }) => {
   const effectiveTab =
@@ -372,7 +396,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             >
               <div className="space-y-2">
                 <div className="grid grid-cols-4 gap-1.5">
-                  {LUT_PRESETS.slice(0, 4).map((lut) => {
+                  {LUT_PRESETS.slice(0, 8).map((lut) => {
                     const active = selectedClip.color.lut === lut.id;
                     return (
                       <button
@@ -610,22 +634,98 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 
         {selectedClip && effectiveTab === 'effects' && (
           <div>
+            {/* Quick Copy / Paste / Reset FX Strip */}
+            <div className="px-3 py-2 border-b border-[#23262E] bg-[#14151A] flex items-center gap-1">
+              {onCopyEffects && (
+                <button
+                  type="button"
+                  onClick={() => onCopyEffects(clipEffects)}
+                  title="Copy Effects & Filter Settings"
+                  aria-label="Copy Effects"
+                  className="flex-1 px-2 py-1.5 text-[11px] font-medium text-[#C7CBD4] hover:text-white bg-[#1E2128] border border-[#2C303A] rounded cursor-pointer flex items-center justify-center gap-1 whitespace-nowrap"
+                >
+                  <ClipboardCopy className="w-3 h-3" />
+                  <span>Copy FX</span>
+                </button>
+              )}
+              {onPasteEffects && (
+                <button
+                  type="button"
+                  disabled={!copiedEffects}
+                  onClick={() => onPasteEffects(selectedClip.id)}
+                  title="Paste Copied Effects to This Clip"
+                  aria-label="Paste Effects"
+                  className="flex-1 px-2 py-1.5 text-[11px] font-medium text-[#C7CBD4] hover:text-white disabled:opacity-35 disabled:pointer-events-none bg-[#1E2128] border border-[#2C303A] rounded cursor-pointer flex items-center justify-center gap-1 whitespace-nowrap"
+                >
+                  <ClipboardPaste className="w-3 h-3" />
+                  <span>Paste FX</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => updateEffects({ ...DEFAULT_EFFECTS })}
+                title="Reset All Filters & Shape Masks"
+                aria-label="Reset All Effects"
+                className="px-2.5 py-1.5 text-[11px] font-medium text-[#9CA3AF] hover:text-white bg-[#1E2128] border border-[#2C303A] rounded cursor-pointer whitespace-nowrap"
+              >
+                Reset
+              </button>
+            </div>
+
+            {/* One-Click Effect Looks */}
+            <CollapsibleSection
+              title="One-Click Effect Styles"
+              defaultOpen
+              onReset={() => updateEffects({ ...DEFAULT_EFFECTS })}
+            >
+              <div className="grid grid-cols-4 gap-1">
+                {EFFECT_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => updateEffects({ ...DEFAULT_EFFECTS, ...preset.patch })}
+                    className="py-1.5 px-1 text-[10px] font-medium text-[#D1D5DB] hover:text-white bg-[#101114] hover:bg-[#262D3B] border border-[#262930] rounded cursor-pointer truncate"
+                    title={`Apply ${preset.label} style`}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </CollapsibleSection>
+
             {/* Quick Split Screen & PiP Layouts */}
             <CollapsibleSection
-              title="Screen Layout & Split Screen"
+              title="Screen Layout & Shape Mask"
               defaultOpen
-              onReset={() => updateTransform({ ...DEFAULT_TRANSFORM })}
+              onReset={() => {
+                updateTransform({ ...DEFAULT_TRANSFORM });
+                updateEffects({ maskShape: 'rect' });
+              }}
             >
-              <div className="grid grid-cols-5 gap-1">
+              <div className="grid grid-cols-3 gap-1">
                 {PIP_PRESETS.map((p) => (
                   <button
                     key={p.id}
                     type="button"
                     onClick={() =>
-                      onUpdateClip(selectedClip.id, (c) => ({
-                        ...c,
-                        transform: getPiPLayoutTransform(p.id, c.transform),
-                      }))
+                      onUpdateClip(selectedClip.id, (c) => {
+                        const baseEffects = c.effects ?? DEFAULT_EFFECTS;
+                        const nextEffects =
+                          p.id === 'pip-circle'
+                            ? {
+                                ...baseEffects,
+                                maskShape: 'circle' as MaskShape,
+                                borderWidth: Math.max(baseEffects.borderWidth ?? 0, 4),
+                              }
+                            : p.id === 'full' && baseEffects.maskShape === 'circle'
+                            ? { ...baseEffects, maskShape: 'rect' as MaskShape }
+                            : baseEffects;
+                        return {
+                          ...c,
+                          transform: getPiPLayoutTransform(p.id, c.transform),
+                          effects: nextEffects,
+                        };
+                      })
                     }
                     className="py-1 text-[10px] font-medium text-[#D1D5DB] hover:text-white bg-[#101114] hover:bg-[#262D3B] border border-[#262930] rounded cursor-pointer whitespace-nowrap"
                   >
@@ -633,6 +733,35 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   </button>
                 ))}
               </div>
+
+              <div className="space-y-1 pt-0.5">
+                <span className="block text-[11px] text-[#A8AEB8]">Frame Shape (Mask)</span>
+                <div className="grid grid-cols-4 gap-1">
+                  {(
+                    [
+                      { id: 'rect', label: 'Box' },
+                      { id: 'circle', label: 'Circle' },
+                      { id: 'pill', label: 'Pill' },
+                      { id: 'diamond', label: 'Diamond' },
+                    ] as const
+                  ).map((sh) => (
+                    <button
+                      key={sh.id}
+                      type="button"
+                      onClick={() => updateEffects({ maskShape: sh.id })}
+                      aria-pressed={(clipEffects.maskShape ?? 'rect') === sh.id}
+                      className={`py-1 text-[10px] font-medium rounded border cursor-pointer ${
+                        (clipEffects.maskShape ?? 'rect') === sh.id
+                          ? 'bg-[#252B36] border-[#3B82F6] text-white'
+                          : 'bg-[#101114] border-[#262930] text-[#9CA3AF] hover:text-white'
+                      }`}
+                    >
+                      {sh.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="flex items-center gap-2 pt-1">
                 <button
                   type="button"
@@ -729,6 +858,66 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               defaultOpen
               onReset={() => updateEffects({ ...DEFAULT_EFFECTS })}
             >
+              <div className="space-y-1">
+                <span className="block text-[11px] text-[#A8AEB8]">Mirror &amp; Kaleidoscope</span>
+                <div className="grid grid-cols-4 gap-1">
+                  {(
+                    [
+                      { id: 'none', label: 'Off' },
+                      { id: 'mirror-h', label: 'Left/Right' },
+                      { id: 'mirror-v', label: 'Top/Bot' },
+                      { id: 'kaleidoscope', label: '4-Way' },
+                    ] as const
+                  ).map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => updateEffects({ mirrorMode: m.id as MirrorEffectMode })}
+                      aria-pressed={(clipEffects.mirrorMode ?? 'none') === m.id}
+                      className={`py-1 text-[10px] font-medium rounded border cursor-pointer ${
+                        (clipEffects.mirrorMode ?? 'none') === m.id
+                          ? 'bg-[#252B36] border-[#3B82F6] text-white'
+                          : 'bg-[#101114] border-[#262930] text-[#9CA3AF] hover:text-white'
+                      }`}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <SliderRow
+                label="RGB Glitch Split"
+                value={clipEffects.chromatic ?? 0}
+                min={0}
+                max={100}
+                unit="%"
+                onChange={(v) => updateEffects({ chromatic: v })}
+              />
+              <SliderRow
+                label="Sunset Light Leak"
+                value={clipEffects.lightLeak ?? 0}
+                min={0}
+                max={100}
+                unit="%"
+                onChange={(v) => updateEffects({ lightLeak: v })}
+              />
+              <SliderRow
+                label="Retro VHS Scanlines"
+                value={clipEffects.scanlines ?? 0}
+                min={0}
+                max={100}
+                unit="%"
+                onChange={(v) => updateEffects({ scanlines: v })}
+              />
+              <SliderRow
+                label="Soft Glow"
+                value={clipEffects.glow}
+                min={0}
+                max={100}
+                unit="%"
+                onChange={(v) => updateEffects({ glow: v })}
+              />
               <SliderRow
                 label="Background Blur"
                 value={clipEffects.blur}
@@ -739,12 +928,12 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 onChange={(v) => updateEffects({ blur: v })}
               />
               <SliderRow
-                label="Soft Glow"
-                value={clipEffects.glow}
+                label="Tilt-Shift Edge Veil"
+                value={clipEffects.tiltShift ?? 0}
                 min={0}
                 max={100}
                 unit="%"
-                onChange={(v) => updateEffects({ glow: v })}
+                onChange={(v) => updateEffects({ tiltShift: v })}
               />
               <SliderRow
                 label="Sepia Warmth"
@@ -761,6 +950,22 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 max={100}
                 unit="%"
                 onChange={(v) => updateEffects({ vintageFade: v })}
+              />
+              <SliderRow
+                label="Posterize Art Levels"
+                value={clipEffects.posterize ?? 0}
+                min={0}
+                max={12}
+                step={1}
+                onChange={(v) => updateEffects({ posterize: v === 1 ? 2 : v })}
+              />
+              <SliderRow
+                label="Ink Stencil Cutoff"
+                value={clipEffects.threshold ?? 0}
+                min={0}
+                max={95}
+                unit="%"
+                onChange={(v) => updateEffects({ threshold: v })}
               />
               <SliderRow
                 label="Mosaic / Pixelate"
@@ -875,6 +1080,35 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 </div>
               </div>
 
+              {/* 1-Click Quick Enter Transition Pills */}
+              <div className="space-y-1 pt-1">
+                <span className="block text-[11px] text-[#A8AEB8]">Quick Enter FX</span>
+                <div className="flex flex-wrap gap-1">
+                  {QUICK_TRANSITIONS.map((qt) => {
+                    const active = selectedClip.transitionIn === qt.id;
+                    return (
+                      <button
+                        key={qt.id}
+                        type="button"
+                        onClick={() =>
+                          onUpdateClip(selectedClip.id, (c) => ({
+                            ...c,
+                            transitionIn: active ? 'none' : qt.id,
+                          }))
+                        }
+                        className={`px-2 py-0.5 text-[10px] rounded border cursor-pointer ${
+                          active
+                            ? 'bg-[#262D3B] border-[#3B82F6] text-white'
+                            : 'bg-[#101114] border-[#262930] text-[#9CA3AF] hover:text-white'
+                        }`}
+                      >
+                        {qt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-2 pt-1">
                 <div className="space-y-1">
                   <label className="block text-[11px] text-[#A8AEB8]">Enter Transition</label>
@@ -892,12 +1126,21 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                     <option value="none">None</option>
                     <option value="cross-dissolve">Smooth Fade</option>
                     <option value="dip-black">Fade from Black</option>
-                    <option value="fade-white">Flash from White</option>
+                    <option value="fade-white">Flash White</option>
+                    <option value="flash-blur">Flash &amp; Zoom</option>
+                    <option value="iris-circle">Circle Open</option>
+                    <option value="split-open">Curtain Split</option>
+                    <option value="spin-in">Spin Reveal</option>
+                    <option value="zoom-in">Zoom In</option>
+                    <option value="zoom-out">Zoom Out</option>
                     <option value="wipe-left">Wipe Left</option>
                     <option value="wipe-right">Wipe Right</option>
-                    <option value="slide-left">Slide In Left</option>
-                    <option value="slide-right">Slide In Right</option>
-                    <option value="zoom-in">Zoom In</option>
+                    <option value="wipe-up">Wipe Up</option>
+                    <option value="wipe-down">Wipe Down</option>
+                    <option value="slide-left">Slide Left</option>
+                    <option value="slide-right">Slide Right</option>
+                    <option value="slide-up">Slide Up</option>
+                    <option value="slide-down">Slide Down</option>
                   </select>
                 </div>
 
@@ -918,8 +1161,18 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                     <option value="cross-dissolve">Smooth Fade</option>
                     <option value="dip-black">Fade to Black</option>
                     <option value="fade-white">Flash to White</option>
+                    <option value="iris-circle">Circle Close</option>
+                    <option value="split-open">Curtain Close</option>
+                    <option value="spin-in">Spin Out</option>
+                    <option value="zoom-in">Zoom Out</option>
+                    <option value="wipe-left">Wipe Left</option>
+                    <option value="wipe-right">Wipe Right</option>
+                    <option value="wipe-up">Wipe Up</option>
+                    <option value="wipe-down">Wipe Down</option>
                     <option value="slide-left">Slide Out Left</option>
                     <option value="slide-right">Slide Out Right</option>
+                    <option value="slide-up">Slide Out Up</option>
+                    <option value="slide-down">Slide Out Down</option>
                   </select>
                 </div>
               </div>
@@ -1072,8 +1325,10 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   >
                     <option value="normal">Natural</option>
                     <option value="voice">Clear Voice</option>
+                    <option value="podcast">Podcast Crisp</option>
                     <option value="warm-bass">Warm Bass</option>
                     <option value="radio">Lo-Fi Radio</option>
+                    <option value="megaphone">Megaphone</option>
                   </select>
                 </div>
               )}

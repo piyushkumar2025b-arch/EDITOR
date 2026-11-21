@@ -20,8 +20,10 @@ import {
   trimClipToPlayhead,
   deleteClip,
   getActiveClipsAtTime,
+  getAdjacentCutTime,
   getPiPLayoutTransform,
   getSequenceDimensionsForRatio,
+  pasteClipAtTime,
 } from './timelineOps';
 import { createDefaultColorGrade, DEFAULT_TRANSFORM } from './colorEngine';
 import { createSeedProject } from './seedProject';
@@ -189,6 +191,23 @@ test('applyColorGradeToAllClips copies look to visual clips only and slipClipSou
 
   const slipped = slipClipSource(graded, 'clip_1', 2.25);
   assert.equal(slipped.find((c) => c.id === 'clip_1')?.sourceIn, 2.25);
+});
+
+test('pip-circle layout, pasteClipAtTime, and getAdjacentCutTime behave accurately', () => {
+  const project = createSeedProject();
+  const circlePip = getPiPLayoutTransform('pip-circle', DEFAULT_TRANSFORM);
+  assert.equal(circlePip.scale, 32);
+  assert.equal(circlePip.cropLeft, 12);
+
+  const first = project.clips[0];
+  const { clips: pasted, newClipId } = pasteClipAtTime(project.clips, first, 12.5);
+  assert.equal(pasted.length, project.clips.length + 1);
+  assert.equal(pasted.find((c) => c.id === newClipId)?.startTime, 12.5);
+
+  const nextCut = getAdjacentCutTime(project.clips, project.markers, 0.5, 'next');
+  assert.ok(nextCut > 0.5);
+  const prevCut = getAdjacentCutTime(project.clips, project.markers, nextCut, 'prev');
+  assert.ok(prevCut < nextCut);
 });
 
 

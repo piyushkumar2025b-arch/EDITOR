@@ -113,8 +113,10 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
               >
                 <option value="normal">Tone: Natural</option>
                 <option value="voice">Tone: Clear Voice</option>
+                <option value="podcast">Tone: Podcast Crisp</option>
                 <option value="warm-bass">Tone: Warm Bass</option>
                 <option value="radio">Tone: Lo-Fi Radio</option>
+                <option value="megaphone">Tone: Megaphone</option>
               </select>
             </div>
           );

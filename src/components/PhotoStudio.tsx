@@ -15,7 +15,12 @@ import {
   isEffectsIdentity,
   PHOTO_STYLE_PRESETS,
 } from '../engine/colorEngine';
-import { LoadedMediaCache } from '../engine/renderer';
+import {
+  applyMirrorModeToCanvas,
+  drawCreativeEffectsOverlays,
+  drawMaskShapePath,
+  LoadedMediaCache,
+} from '../engine/renderer';
 import { CropAspectPreset, MediaAsset, TimelineClip } from '../engine/types';
 
 interface PhotoStudioProps {
@@ -139,8 +144,9 @@ export const PhotoStudio: React.FC<PhotoStudioProps> = ({
           tCtx.drawImage(img, 0, 0, rw, rh);
           tCtx.filter = 'none';
         }
+        applyMirrorModeToCanvas(tCtx, tmp, activeClip.effects?.mirrorMode);
         const imgData = tCtx.getImageData(0, 0, rw, rh);
-        applyColorGradeToImageData(imgData.data, activeClip.color, activeClip.effects);
+        applyColorGradeToImageData(imgData.data, activeClip.color, activeClip.effects, rw);
         tCtx.putImageData(imgData, 0, 0);
 
         const glowAmt = activeClip.effects?.glow ?? 0;
@@ -152,6 +158,7 @@ export const PhotoStudio: React.FC<PhotoStudioProps> = ({
           tCtx.drawImage(tmp, 0, 0);
           tCtx.restore();
         }
+        drawCreativeEffectsOverlays(tCtx, rw, rh, activeClip.effects);
         gradedPhotoSource = tmp;
       }
     }
@@ -178,28 +185,31 @@ export const PhotoStudio: React.FC<PhotoStudioProps> = ({
       const ry = -drawH / 2 + cTop;
       const rWidth = Math.max(1, drawW - cLeft - cRight);
       const rHeight = Math.max(1, drawH - cTop - cBottom);
+      const cornerRad = activeClip.effects?.cornerRadius ?? 0;
+      const maskShape = withFrameEffects ? activeClip.effects?.maskShape : 'rect';
 
       if (withFrameEffects && (activeClip.effects?.dropShadow ?? 0) > 0.5) {
         targetCtx.save();
         targetCtx.shadowColor = 'rgba(0,0,0,0.75)';
         targetCtx.shadowBlur = activeClip.effects?.dropShadow ?? 0;
         targetCtx.fillStyle = '#000000';
-        targetCtx.fillRect(rx, ry, rWidth, rHeight);
+        drawMaskShapePath(targetCtx, maskShape, rx, ry, rWidth, rHeight, cornerRad);
+        targetCtx.fill();
         targetCtx.restore();
       }
 
       targetCtx.save();
-      targetCtx.beginPath();
-      targetCtx.rect(rx, ry, rWidth, rHeight);
+      drawMaskShapePath(targetCtx, maskShape, rx, ry, rWidth, rHeight, cornerRad);
       targetCtx.clip();
       targetCtx.drawImage(src, -drawW / 2, -drawH / 2, drawW, drawH);
       targetCtx.restore();
 
       const bw = withFrameEffects ? activeClip.effects?.borderWidth ?? 0 : 0;
       if (bw > 0.25) {
+        drawMaskShapePath(targetCtx, maskShape, rx, ry, rWidth, rHeight, cornerRad);
         targetCtx.strokeStyle = activeClip.effects?.borderColor ?? '#FFFFFF';
         targetCtx.lineWidth = bw;
-        targetCtx.strokeRect(rx, ry, rWidth, rHeight);
+        targetCtx.stroke();
       }
       targetCtx.restore();
     };
@@ -559,7 +569,7 @@ export const PhotoStudio: React.FC<PhotoStudioProps> = ({
                 onUpdateClip(activeClip.id, (c) => ({
                   ...c,
                   color: style.buildGrade(),
-                  effects: { ...(c.effects ?? DEFAULT_EFFECTS), ...(style.effects ?? {}) },
+                  effects: { ...DEFAULT_EFFECTS, ...(style.effects ?? {}) },
                 }))
               }
               className="px-2.5 py-1 text-[11px] font-medium text-[#D1D5DB] hover:text-white bg-[#1D2027] hover:bg-[#282D38] border border-[#2A2E38] rounded cursor-pointer whitespace-nowrap shrink-0"

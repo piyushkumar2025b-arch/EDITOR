@@ -7,7 +7,9 @@ import {
 } from './colorEngine';
 import { getActiveClipsAtTime } from './timelineOps';
 import {
+  MaskShape,
   MediaAsset,
+  MirrorEffectMode,
   ScopeData,
   SequenceSettings,
   TimelineClip,
@@ -101,6 +103,156 @@ function drawRoundedRectPath(
   ctx.lineTo(x, y + radius);
   ctx.quadraticCurveTo(x, y, x + radius, y);
   ctx.closePath();
+}
+
+export function drawMaskShapePath(
+  ctx: CanvasRenderingContext2D,
+  maskShape: MaskShape | undefined,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  cornerRadius: number
+) {
+  const shape = maskShape ?? 'rect';
+  if (shape === 'circle') {
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    const rad = Math.max(1, Math.min(w, h) / 2);
+    ctx.beginPath();
+    ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+    ctx.closePath();
+    return;
+  }
+  if (shape === 'pill') {
+    drawRoundedRectPath(ctx, x, y, w, h, Math.min(w, h) / 2);
+    return;
+  }
+  if (shape === 'diamond') {
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, y);
+    ctx.lineTo(x + w, cy);
+    ctx.lineTo(cx, y + h);
+    ctx.lineTo(x, cy);
+    ctx.closePath();
+    return;
+  }
+  drawRoundedRectPath(ctx, x, y, w, h, cornerRadius);
+}
+
+export function applyMirrorModeToCanvas(
+  ctx: CanvasRenderingContext2D,
+  source: HTMLCanvasElement,
+  mirrorMode: MirrorEffectMode | undefined
+) {
+  if (!mirrorMode || mirrorMode === 'none') return;
+  const w = source.width;
+  const h = source.height;
+  const copy = document.createElement('canvas');
+  copy.width = w;
+  copy.height = h;
+  const cCtx = copy.getContext('2d');
+  if (!cCtx) return;
+  cCtx.drawImage(source, 0, 0);
+
+  const halfW = Math.ceil(w / 2);
+  const halfH = Math.ceil(h / 2);
+
+  if (mirrorMode === 'mirror-h') {
+    ctx.save();
+    ctx.translate(w, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(copy, 0, 0, halfW, h, 0, 0, halfW, h);
+    ctx.restore();
+  } else if (mirrorMode === 'mirror-v') {
+    ctx.save();
+    ctx.translate(0, h);
+    ctx.scale(1, -1);
+    ctx.drawImage(copy, 0, 0, w, halfH, 0, 0, w, halfH);
+    ctx.restore();
+  } else if (mirrorMode === 'kaleidoscope') {
+    ctx.save();
+    ctx.translate(w, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(copy, 0, 0, halfW, halfH, 0, 0, halfW, halfH);
+    ctx.restore();
+
+    ctx.save();
+    ctx.translate(0, h);
+    ctx.scale(1, -1);
+    ctx.drawImage(copy, 0, 0, halfW, halfH, 0, 0, halfW, halfH);
+    ctx.restore();
+
+    ctx.save();
+    ctx.translate(w, h);
+    ctx.scale(-1, -1);
+    ctx.drawImage(copy, 0, 0, halfW, halfH, 0, 0, halfW, halfH);
+    ctx.restore();
+  }
+}
+
+export function drawCreativeEffectsOverlays(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  effects: TimelineClip['effects']
+) {
+  if (!effects) return;
+
+  // Sunset Light Leak (warm amber + magenta flare from corner)
+  const leak = effects.lightLeak ?? 0;
+  if (leak > 0) {
+    const strength = Math.min(0.85, (leak / 100) * 0.78);
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    const g1 = ctx.createRadialGradient(w * 0.1, h * 0.15, 0, w * 0.12, h * 0.18, Math.max(w, h) * 0.7);
+    g1.addColorStop(0, `rgba(255, 165, 64, ${strength})`);
+    g1.addColorStop(0.4, `rgba(244, 63, 94, ${strength * 0.55})`);
+    g1.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = g1;
+    ctx.fillRect(0, 0, w, h);
+
+    const g2 = ctx.createRadialGradient(w * 0.92, h * 0.85, 0, w * 0.9, h * 0.85, Math.max(w, h) * 0.45);
+    g2.addColorStop(0, `rgba(251, 191, 36, ${strength * 0.5})`);
+    g2.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = g2;
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+  }
+
+  // Retro CRT / VHS Scanlines
+  const scan = effects.scanlines ?? 0;
+  if (scan > 0) {
+    const lineAlpha = Math.min(0.65, (scan / 100) * 0.58);
+    ctx.save();
+    ctx.fillStyle = `rgba(0, 0, 0, ${lineAlpha})`;
+    const step = Math.max(3, Math.round(h / 140));
+    for (let y = 0; y < h; y += step) {
+      ctx.fillRect(0, y, w, Math.max(1, Math.floor(step * 0.42)));
+    }
+    ctx.restore();
+  }
+
+  // Tilt-Shift Miniature Soft Focus (top & bottom soft gradient veil)
+  const tilt = effects.tiltShift ?? 0;
+  if (tilt > 0) {
+    const bandAlpha = Math.min(0.75, (tilt / 100) * 0.65);
+    ctx.save();
+    const topGrad = ctx.createLinearGradient(0, 0, 0, h * 0.34);
+    topGrad.addColorStop(0, `rgba(12, 14, 18, ${bandAlpha})`);
+    topGrad.addColorStop(1, 'rgba(12, 14, 18, 0)');
+    ctx.fillStyle = topGrad;
+    ctx.fillRect(0, 0, w, h * 0.34);
+
+    const botGrad = ctx.createLinearGradient(0, h * 0.66, 0, h);
+    botGrad.addColorStop(0, 'rgba(12, 14, 18, 0)');
+    botGrad.addColorStop(1, `rgba(12, 14, 18, ${bandAlpha})`);
+    ctx.fillStyle = botGrad;
+    ctx.fillRect(0, h * 0.66, w, h * 0.34);
+    ctx.restore();
+  }
 }
 
 function drawVignetteAndGrain(
@@ -352,9 +504,11 @@ function getOrBuildGradedImageCanvas(
     offCtx.filter = 'none';
   }
 
+  applyMirrorModeToCanvas(offCtx, off, clip.effects?.mirrorMode);
+
   if (!isColorGradeIdentity(clip.color) || !isEffectsIdentity(clip.effects)) {
     const imgData = offCtx.getImageData(0, 0, rw, rh);
-    applyColorGradeToImageData(imgData.data, clip.color, clip.effects);
+    applyColorGradeToImageData(imgData.data, clip.color, clip.effects, rw);
     offCtx.putImageData(imgData, 0, 0);
   }
 
@@ -368,8 +522,46 @@ function getOrBuildGradedImageCanvas(
     offCtx.restore();
   }
 
+  drawCreativeEffectsOverlays(offCtx, rw, rh, clip.effects);
+
   setGradedCacheEntry(key, off);
   return off;
+}
+
+type ClipMaskMode =
+  | { kind: 'wipe'; dir: 'left' | 'right' | 'up' | 'down'; fraction: number }
+  | { kind: 'iris'; fraction: number }
+  | { kind: 'split-open'; fraction: number }
+  | null;
+
+function applyTransitionClipMask(
+  ctx: CanvasRenderingContext2D,
+  mask: ClipMaskMode,
+  w: number,
+  h: number
+) {
+  if (!mask) return;
+  if (mask.kind === 'wipe') {
+    const f = Math.max(0, Math.min(1, mask.fraction));
+    ctx.beginPath();
+    if (mask.dir === 'left') ctx.rect(0, 0, Math.round(w * f), h);
+    else if (mask.dir === 'right') ctx.rect(Math.round(w * (1 - f)), 0, Math.round(w * f), h);
+    else if (mask.dir === 'up') ctx.rect(0, 0, w, Math.round(h * f));
+    else ctx.rect(0, Math.round(h * (1 - f)), w, Math.round(h * f));
+    ctx.clip();
+  } else if (mask.kind === 'iris') {
+    const f = Math.max(0.01, Math.min(1, mask.fraction));
+    const maxRad = Math.hypot(w / 2, h / 2) * 1.05;
+    ctx.beginPath();
+    ctx.arc(w / 2, h / 2, maxRad * f, 0, Math.PI * 2);
+    ctx.clip();
+  } else if (mask.kind === 'split-open') {
+    const f = Math.max(0.01, Math.min(1, mask.fraction));
+    const openW = Math.round(w * f);
+    ctx.beginPath();
+    ctx.rect((w - openW) / 2, 0, openW, h);
+    ctx.clip();
+  }
 }
 
 export function renderClipToCanvas(
@@ -393,46 +585,91 @@ export function renderClipToCanvas(
     fadeAlpha = Math.min(fadeAlpha, Math.max(0, timeFromEnd / clip.fadeOut));
   }
 
-  let wipeFraction: number | null = null;
-  let wipeDirection: 'left' | 'right' = 'left';
+  let transMask: ClipMaskMode = null;
   let slideOffsetX = 0;
+  let slideOffsetY = 0;
   let transitionScaleBoost = 1;
+  let transitionRotDeg = 0;
   let whiteFlashAlpha = 0;
 
   if (clip.transitionIn && clip.transitionIn !== 'none' && relTime < transDur && transDur > 0.01) {
     const p = Math.max(0, Math.min(1, relTime / transDur));
     const ease = 1 - Math.pow(1 - p, 2);
-    if (clip.transitionIn === 'cross-dissolve' || clip.transitionIn === 'dip-black') {
+    const tIn = clip.transitionIn;
+    if (tIn === 'cross-dissolve' || tIn === 'dip-black') {
       fadeAlpha = Math.min(fadeAlpha, p);
-    } else if (clip.transitionIn === 'fade-white') {
+    } else if (tIn === 'fade-white') {
       whiteFlashAlpha = Math.max(whiteFlashAlpha, 1 - ease);
-    } else if (clip.transitionIn === 'wipe-left') {
-      wipeFraction = p;
-      wipeDirection = 'left';
-    } else if (clip.transitionIn === 'wipe-right') {
-      wipeFraction = p;
-      wipeDirection = 'right';
-    } else if (clip.transitionIn === 'slide-left') {
+    } else if (tIn === 'wipe-left') {
+      transMask = { kind: 'wipe', dir: 'left', fraction: ease };
+    } else if (tIn === 'wipe-right') {
+      transMask = { kind: 'wipe', dir: 'right', fraction: ease };
+    } else if (tIn === 'wipe-up') {
+      transMask = { kind: 'wipe', dir: 'up', fraction: ease };
+    } else if (tIn === 'wipe-down') {
+      transMask = { kind: 'wipe', dir: 'down', fraction: ease };
+    } else if (tIn === 'slide-left') {
       slideOffsetX = (1 - ease) * canvasWidth;
-    } else if (clip.transitionIn === 'slide-right') {
+    } else if (tIn === 'slide-right') {
       slideOffsetX = -(1 - ease) * canvasWidth;
-    } else if (clip.transitionIn === 'zoom-in') {
-      transitionScaleBoost = 0.72 + 0.28 * ease;
+    } else if (tIn === 'slide-up') {
+      slideOffsetY = (1 - ease) * canvasHeight;
+    } else if (tIn === 'slide-down') {
+      slideOffsetY = -(1 - ease) * canvasHeight;
+    } else if (tIn === 'zoom-in') {
+      transitionScaleBoost = 0.7 + 0.3 * ease;
       fadeAlpha = Math.min(fadeAlpha, ease);
+    } else if (tIn === 'zoom-out') {
+      transitionScaleBoost = 1.45 - 0.45 * ease;
+      fadeAlpha = Math.min(fadeAlpha, ease);
+    } else if (tIn === 'spin-in') {
+      transitionScaleBoost = 0.3 + 0.7 * ease;
+      transitionRotDeg = (1 - ease) * 180;
+      fadeAlpha = Math.min(fadeAlpha, ease);
+    } else if (tIn === 'iris-circle') {
+      transMask = { kind: 'iris', fraction: ease };
+    } else if (tIn === 'split-open') {
+      transMask = { kind: 'split-open', fraction: ease };
+    } else if (tIn === 'flash-blur') {
+      transitionScaleBoost = 1.18 - 0.18 * ease;
+      whiteFlashAlpha = Math.max(whiteFlashAlpha, (1 - ease) * 0.85);
     }
   }
 
   if (clip.transitionOut && clip.transitionOut !== 'none' && timeFromEnd < transDur && transDur > 0.01) {
     const p = Math.max(0, Math.min(1, timeFromEnd / transDur));
     const ease = 1 - Math.pow(1 - p, 2);
-    if (clip.transitionOut === 'cross-dissolve' || clip.transitionOut === 'dip-black') {
+    const tOut = clip.transitionOut;
+    if (tOut === 'cross-dissolve' || tOut === 'dip-black') {
       fadeAlpha = Math.min(fadeAlpha, p);
-    } else if (clip.transitionOut === 'fade-white') {
+    } else if (tOut === 'fade-white') {
       whiteFlashAlpha = Math.max(whiteFlashAlpha, 1 - ease);
-    } else if (clip.transitionOut === 'slide-left') {
+    } else if (tOut === 'wipe-left' || tOut === 'wipe-right' || tOut === 'wipe-up' || tOut === 'wipe-down') {
+      transMask = { kind: 'wipe', dir: tOut.replace('wipe-', '') as 'left' | 'right' | 'up' | 'down', fraction: ease };
+    } else if (tOut === 'slide-left') {
       slideOffsetX = -(1 - ease) * canvasWidth;
-    } else if (clip.transitionOut === 'slide-right') {
+    } else if (tOut === 'slide-right') {
       slideOffsetX = (1 - ease) * canvasWidth;
+    } else if (tOut === 'slide-up') {
+      slideOffsetY = -(1 - ease) * canvasHeight;
+    } else if (tOut === 'slide-down') {
+      slideOffsetY = (1 - ease) * canvasHeight;
+    } else if (tOut === 'zoom-in') {
+      transitionScaleBoost = 0.7 + 0.3 * ease;
+      fadeAlpha = Math.min(fadeAlpha, ease);
+    } else if (tOut === 'zoom-out') {
+      transitionScaleBoost = 1.45 - 0.45 * ease;
+      fadeAlpha = Math.min(fadeAlpha, ease);
+    } else if (tOut === 'spin-in') {
+      transitionScaleBoost = 0.3 + 0.7 * ease;
+      transitionRotDeg = -(1 - ease) * 180;
+      fadeAlpha = Math.min(fadeAlpha, ease);
+    } else if (tOut === 'iris-circle') {
+      transMask = { kind: 'iris', fraction: ease };
+    } else if (tOut === 'split-open') {
+      transMask = { kind: 'split-open', fraction: ease };
+    } else if (tOut === 'flash-blur') {
+      whiteFlashAlpha = Math.max(whiteFlashAlpha, (1 - ease) * 0.85);
     }
   }
 
@@ -532,6 +769,7 @@ export function renderClipToCanvas(
   const borderW = (clip.effects?.borderWidth ?? 0) * minScaleFactor;
   const borderColor = clip.effects?.borderColor ?? '#FFFFFF';
   const dropShadowPx = (clip.effects?.dropShadow ?? 0) * minScaleFactor;
+  const maskShape = clip.effects?.maskShape;
 
   let sourceToDraw: CanvasImageSource = mediaSource;
   let videoNeedsScratchGrade = false;
@@ -559,14 +797,14 @@ export function renderClipToCanvas(
     sCtx.save();
     sCtx.translate(
       canvasWidth / 2 + clip.transform.x * scaleXFactor + motionPanX + slideOffsetX,
-      canvasHeight / 2 + clip.transform.y * scaleYFactor + motionPanY
+      canvasHeight / 2 + clip.transform.y * scaleYFactor + motionPanY + slideOffsetY
     );
-    sCtx.rotate(((clip.transform.rotation + motionRotDeg) * Math.PI) / 180);
+    sCtx.rotate(((clip.transform.rotation + motionRotDeg + transitionRotDeg) * Math.PI) / 180);
     sCtx.scale(
       totalScale * (clip.transform.flipH ? -1 : 1),
       totalScale * (clip.transform.flipV ? -1 : 1)
     );
-    drawRoundedRectPath(sCtx, cropX, cropY, croppedW, croppedH, cornerRad);
+    drawMaskShapePath(sCtx, maskShape, cropX, cropY, croppedW, croppedH, cornerRad);
     sCtx.clip();
     const blurPx = clip.effects?.blur ?? 0;
     if (blurPx > 0) sCtx.filter = `blur(${blurPx}px)`;
@@ -574,21 +812,18 @@ export function renderClipToCanvas(
     sCtx.filter = 'none';
     sCtx.restore();
 
+    applyMirrorModeToCanvas(sCtx, sCtx.canvas, clip.effects?.mirrorMode);
+
     const imgData = sCtx.getImageData(0, 0, canvasWidth, canvasHeight);
-    applyColorGradeToImageData(imgData.data, clip.color, clip.effects);
+    applyColorGradeToImageData(imgData.data, clip.color, clip.effects, canvasWidth);
     sCtx.putImageData(imgData, 0, 0);
+    drawCreativeEffectsOverlays(sCtx, canvasWidth, canvasHeight, clip.effects);
     sourceToDraw = sCtx.canvas;
 
     ctx.save();
     ctx.globalAlpha = finalAlpha;
     ctx.globalCompositeOperation = clip.transform.blendMode;
-    if (wipeFraction !== null) {
-      const ww = Math.round(canvasWidth * wipeFraction);
-      ctx.beginPath();
-      if (wipeDirection === 'left') ctx.rect(0, 0, ww, canvasHeight);
-      else ctx.rect(canvasWidth - ww, 0, ww, canvasHeight);
-      ctx.clip();
-    }
+    applyTransitionClipMask(ctx, transMask, canvasWidth, canvasHeight);
     ctx.drawImage(sourceToDraw, 0, 0);
     if (!skipColorGrade && (clip.color.vignette !== 0 || clip.color.grain > 0)) {
       drawVignetteAndGrain(ctx, canvasWidth, canvasHeight, clip.color.vignette, clip.color.grain, localTime);
@@ -605,21 +840,14 @@ export function renderClipToCanvas(
   ctx.save();
   ctx.globalAlpha = finalAlpha;
   ctx.globalCompositeOperation = clip.transform.blendMode;
-
-  if (wipeFraction !== null) {
-    const ww = Math.round(canvasWidth * wipeFraction);
-    ctx.beginPath();
-    if (wipeDirection === 'left') ctx.rect(0, 0, ww, canvasHeight);
-    else ctx.rect(canvasWidth - ww, 0, ww, canvasHeight);
-    ctx.clip();
-  }
+  applyTransitionClipMask(ctx, transMask, canvasWidth, canvasHeight);
 
   ctx.save();
   ctx.translate(
     canvasWidth / 2 + clip.transform.x * scaleXFactor + motionPanX + slideOffsetX,
-    canvasHeight / 2 + clip.transform.y * scaleYFactor + motionPanY
+    canvasHeight / 2 + clip.transform.y * scaleYFactor + motionPanY + slideOffsetY
   );
-  ctx.rotate(((clip.transform.rotation + motionRotDeg) * Math.PI) / 180);
+  ctx.rotate(((clip.transform.rotation + motionRotDeg + transitionRotDeg) * Math.PI) / 180);
   ctx.scale(
     totalScale * (clip.transform.flipH ? -1 : 1),
     totalScale * (clip.transform.flipV ? -1 : 1)
@@ -630,20 +858,20 @@ export function renderClipToCanvas(
     ctx.shadowColor = 'rgba(0, 0, 0, 0.72)';
     ctx.shadowBlur = dropShadowPx;
     ctx.shadowOffsetY = dropShadowPx * 0.25;
-    drawRoundedRectPath(ctx, cropX, cropY, croppedW, croppedH, cornerRad);
+    drawMaskShapePath(ctx, maskShape, cropX, cropY, croppedW, croppedH, cornerRad);
     ctx.fillStyle = '#000000';
     ctx.fill();
     ctx.restore();
   }
 
   ctx.save();
-  drawRoundedRectPath(ctx, cropX, cropY, croppedW, croppedH, cornerRad);
+  drawMaskShapePath(ctx, maskShape, cropX, cropY, croppedW, croppedH, cornerRad);
   ctx.clip();
   ctx.drawImage(sourceToDraw, -drawW / 2, -drawH / 2, drawW, drawH);
   ctx.restore();
 
   if (borderW > 0.25) {
-    drawRoundedRectPath(ctx, cropX, cropY, croppedW, croppedH, cornerRad);
+    drawMaskShapePath(ctx, maskShape, cropX, cropY, croppedW, croppedH, cornerRad);
     ctx.strokeStyle = borderColor;
     ctx.lineWidth = borderW;
     ctx.stroke();

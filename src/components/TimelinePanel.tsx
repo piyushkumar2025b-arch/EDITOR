@@ -264,7 +264,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
           <button
             type="button"
             onClick={onSplitAllAtPlayhead}
-            title="Cut All Tracks at Playhead"
+            title="Cut All Tracks at Playhead (Ctrl+Shift+K)"
             aria-label="Cut All Tracks"
             className="flex items-center gap-1 px-2 py-1 text-[11px] text-[#C7CBD4] hover:text-white bg-[#1D1F26] border border-[#292D36] rounded cursor-pointer whitespace-nowrap"
           >
@@ -277,7 +277,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
               <button
                 type="button"
                 onClick={() => onSplitClip(selectedClip.id, currentTime)}
-                title="Split Selected Clip at Playhead"
+                title="Split Selected Clip at Playhead (Ctrl+K)"
                 aria-label="Split Clip at Playhead"
                 className="flex items-center gap-1 px-2 py-1 text-[11px] text-[#C7CBD4] hover:text-white bg-[#1D1F26] border border-[#292D36] rounded cursor-pointer whitespace-nowrap"
               >
@@ -315,7 +315,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
               <button
                 type="button"
                 onClick={() => onDuplicateClip(selectedClip.id)}
-                title="Duplicate Selected Clip"
+                title="Duplicate Selected Clip (Ctrl+D)"
                 aria-label="Duplicate Clip"
                 className="p-1.5 text-[#C7CBD4] hover:text-white bg-[#1D1F26] border border-[#292D36] rounded cursor-pointer"
               >

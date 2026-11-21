@@ -25,6 +25,8 @@ interface TopBarProps {
   onToggleSafeGuides: () => void;
   showGrid: boolean;
   onToggleGrid: () => void;
+  showShortcuts?: boolean;
+  onToggleShortcuts?: () => void;
   onResetProject: () => void;
   onSaveProjectFile?: () => void;
   onLoadProjectFile?: (file: File) => void;
@@ -38,17 +40,51 @@ const WORKSPACES: { id: WorkspaceMode; label: string }[] = [
   { id: 'audio', label: 'Audio Mixer' },
 ];
 
-const SHORTCUTS: { keys: string; action: string }[] = [
-  { keys: 'Space', action: 'Play / Pause' },
-  { keys: 'J / K / L', action: 'Reverse / Stop / Fast Forward' },
-  { keys: '← / →', action: 'Step Back / Forward 1 Frame' },
-  { keys: 'V / C / B', action: 'Select / Cut / Trim Tool' },
-  { keys: 'S', action: 'Toggle Magnet Snap' },
-  { keys: 'I / O', action: 'Set Start / End Export Range' },
-  { keys: 'M', action: 'Add Timeline Bookmark' },
-  { keys: 'Del / Shift+Del', action: 'Delete / Delete & Close Gap' },
-  { keys: 'Ctrl+Z / Shift+Z', action: 'Undo / Redo' },
-  { keys: 'Double-Click Label', action: 'Reset Slider' },
+const SHORTCUT_GROUPS: {
+  title: string;
+  items: { keys: string; action: string }[];
+}[] = [
+  {
+    title: 'Playback & Navigation',
+    items: [
+      { keys: 'Space', action: 'Play / Pause' },
+      { keys: 'J / K / L', action: 'Rewind / Pause / Fast Forward' },
+      { keys: '← / →', action: 'Step 1 Frame Back / Forward' },
+      { keys: 'Shift + ← / →', action: 'Jump 1 Second Back / Forward' },
+      { keys: '↑ / ↓', action: 'Jump to Prev / Next Cut or Marker' },
+      { keys: 'Home / End', action: 'Jump to Start / End of Timeline' },
+    ],
+  },
+  {
+    title: 'Timeline & Clip Edits',
+    items: [
+      { keys: 'Ctrl + K', action: 'Split Clip at Playhead' },
+      { keys: 'Ctrl + Shift + K', action: 'Cut All Tracks at Playhead' },
+      { keys: 'Ctrl + D', action: 'Duplicate Selected Clip' },
+      { keys: 'Ctrl + C / Ctrl + V', action: 'Copy / Paste at Playhead' },
+      { keys: 'Alt + ← / →', action: 'Nudge Clip ±0.25s' },
+      { keys: 'Del / Shift + Del', action: 'Delete / Ripple Close Gap' },
+    ],
+  },
+  {
+    title: 'Tools & Markers',
+    items: [
+      { keys: 'V / C / B', action: 'Select / Cut / Trim Tool' },
+      { keys: 'T / H', action: 'Insert Text / Pan Timeline' },
+      { keys: 'S', action: 'Toggle Magnet Edge Snap' },
+      { keys: 'I / O', action: 'Set Export Start / End Point' },
+      { keys: 'M', action: 'Add Timeline Bookmark' },
+    ],
+  },
+  {
+    title: 'Audio, Color & View',
+    items: [
+      { keys: 'Ctrl + M', action: 'Mute / Unmute Sound' },
+      { keys: 'Ctrl + Z / Shift + Z', action: 'Undo / Redo History' },
+      { keys: 'Double-Click Label', action: 'Reset Slider to Default' },
+      { keys: '? / Esc', action: 'Controls Help / Close Modal' },
+    ],
+  },
 ];
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -63,24 +99,35 @@ export const TopBar: React.FC<TopBarProps> = ({
   onToggleSafeGuides,
   showGrid,
   onToggleGrid,
+  showShortcuts: controlledShortcuts,
+  onToggleShortcuts,
   onResetProject,
   onSaveProjectFile,
   onLoadProjectFile,
   onOpenExport,
 }) => {
-  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [internalShortcuts, setInternalShortcuts] = useState(false);
+  const showShortcuts = controlledShortcuts ?? internalShortcuts;
+  const toggleShortcuts = onToggleShortcuts ?? (() => setInternalShortcuts((s) => !s));
+  const closeShortcuts = () => {
+    if (controlledShortcuts !== undefined) {
+      if (controlledShortcuts && onToggleShortcuts) onToggleShortcuts();
+    } else {
+      setInternalShortcuts(false);
+    }
+  };
   const projectFileRef = useRef<HTMLInputElement>(null);
 
   return (
-    <header className="h-11 shrink-0 bg-[#141518] border-b border-[#262930] px-4 flex items-center justify-between gap-6 select-none relative z-40">
+    <header className="h-11 shrink-0 bg-[#141518] border-b border-[#262930] px-4 flex items-center justify-between gap-4 select-none relative z-40">
       {/* Zone 1: Brand & Sequence */}
-      <div className="flex items-center gap-4 min-w-0 shrink-0">
+      <div className="flex items-center gap-3 min-w-0 shrink-0">
         <span className="text-[15px] font-semibold tracking-tight text-[#F3F4F6] whitespace-nowrap shrink-0">
           Auteur Studio
         </span>
         <span className="h-3.5 w-px bg-[#2A2D35]" aria-hidden="true" />
         <div className="hidden lg:flex items-center gap-2 text-[12px] text-[#8E939E] whitespace-nowrap">
-          <span className="text-[#C7CBD4] font-medium truncate max-w-[160px]">
+          <span className="text-[#C7CBD4] font-medium truncate max-w-[150px]">
             {sequence.name}
           </span>
           <span aria-hidden="true">·</span>
@@ -93,7 +140,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       {/* Zone 2: Workspace Switcher */}
       <nav
         aria-label="Workspaces"
-        className="flex items-center gap-0.5 bg-[#1B1D22] p-0.5 rounded border border-[#282B33]"
+        className="flex items-center gap-0.5 bg-[#1B1D22] p-0.5 rounded border border-[#282B33] shrink-0"
       >
         {WORKSPACES.map((ws) => {
           const active = workspace === ws.id;
@@ -115,7 +162,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         })}
       </nav>
 
-      {/* Zone 3: History, Guides, Shortcuts & Export */}
+      {/* Zone 3: History, Guides, Keyboard Controls & Export */}
       <div className="flex items-center gap-2 shrink-0">
         <div className="flex items-center border border-[#282B33] rounded bg-[#181A1F]">
           <button
@@ -171,17 +218,18 @@ export const TopBar: React.FC<TopBarProps> = ({
 
         <button
           type="button"
-          onClick={() => setShowShortcuts((s) => !s)}
+          onClick={toggleShortcuts}
           aria-expanded={showShortcuts}
-          aria-label="Keyboard Shortcuts"
-          title="Keyboard Shortcuts & Project Reset"
-          className={`p-1.5 rounded border transition-colors cursor-pointer ${
+          aria-label="Keyboard Shortcuts & Controls Help"
+          title="Keyboard Controls & Help (?)"
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-[11px] font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
             showShortcuts
               ? 'bg-[#262A34] border-[#3B82F6]/60 text-white'
-              : 'bg-[#181A1F] border-[#282B33] text-[#9CA3AF] hover:text-white'
+              : 'bg-[#181A1F] border-[#282B33] text-[#C7CBD4] hover:text-white'
           }`}
         >
           <HelpCircle className="w-3.5 h-3.5" />
+          <span>Controls</span>
         </button>
 
         <button
@@ -194,95 +242,109 @@ export const TopBar: React.FC<TopBarProps> = ({
         </button>
       </div>
 
-      {/* Keyboard Shortcuts Reference Popover */}
+      {/* Categorized Keyboard Controls & Project Menu Popover */}
       {showShortcuts && (
         <div
           role="dialog"
           aria-label="Keyboard Shortcuts Reference"
-          className="absolute right-4 top-12 w-80 bg-[#181A20] border border-[#2D313B] rounded-md shadow-2xl p-3 z-50"
+          className="absolute right-4 top-12 w-[680px] max-w-[calc(100vw-2rem)] bg-[#181A20] border border-[#2D313B] rounded-md shadow-2xl p-4 z-50"
         >
-          <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#252830]">
-            <span className="text-[12px] font-semibold text-white">Studio Shortcuts</span>
+          <div className="flex items-center justify-between pb-2.5 mb-3 border-b border-[#252830]">
+            <div>
+              <h2 className="text-[13px] font-semibold text-white">
+                Keyboard Controls &amp; Studio Guide
+              </h2>
+              <p className="text-[11px] text-[#8E939E]">
+                Fast keys for playback, cutting, effects, and timeline navigation
+              </p>
+            </div>
             <button
               type="button"
-              onClick={() => setShowShortcuts(false)}
+              onClick={closeShortcuts}
               aria-label="Close Shortcuts"
-              className="text-[#8E939E] hover:text-white cursor-pointer"
+              className="p-1 text-[#8E939E] hover:text-white rounded cursor-pointer"
             >
-              <X className="w-3.5 h-3.5" />
+              <X className="w-4 h-4" />
             </button>
           </div>
-          <div className="space-y-1.5">
-            {SHORTCUTS.map((item) => (
-              <div
-                key={item.keys}
-                className="flex items-center justify-between gap-3 text-[11px]"
-              >
-                <span className="text-[#A8AEB8]">{item.action}</span>
-                <span className="font-mono-tabular text-[#E5E7EB] bg-[#111215] px-1.5 py-0.5 rounded-xs border border-[#262930] shrink-0">
-                  {item.keys}
-                </span>
+
+          <div className="grid grid-cols-2 gap-x-5 gap-y-4">
+            {SHORTCUT_GROUPS.map((group) => (
+              <div key={group.title} className="space-y-1.5">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-[#60A5FA]">
+                  {group.title}
+                </div>
+                <div className="space-y-1">
+                  {group.items.map((item) => (
+                    <div
+                      key={item.keys}
+                      className="flex items-center justify-between gap-2 text-[11px]"
+                    >
+                      <span className="text-[#C7CBD4] truncate">{item.action}</span>
+                      <span className="font-mono-tabular text-[10px] text-[#E5E7EB] bg-[#111215] px-1.5 py-0.5 rounded-xs border border-[#262930] shrink-0">
+                        {item.keys}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
             ))}
           </div>
-          <div className="mt-3 pt-2.5 border-t border-[#252830] space-y-2">
-            {(onSaveProjectFile || onLoadProjectFile) && (
-              <div className="flex items-center gap-1.5">
-                {onSaveProjectFile && (
+
+          <div className="mt-4 pt-3 border-t border-[#252830] flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              {onSaveProjectFile && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSaveProjectFile();
+                    closeShortcuts();
+                  }}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-medium text-[#E5E7EB] bg-[#1F222A] hover:bg-[#2A2F3B] border border-[#2C303A] rounded cursor-pointer"
+                >
+                  <Save className="w-3 h-3" />
+                  <span>Save Project File</span>
+                </button>
+              )}
+              {onLoadProjectFile && (
+                <>
                   <button
                     type="button"
-                    onClick={() => {
-                      onSaveProjectFile();
-                      setShowShortcuts(false);
-                    }}
-                    className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-[11px] font-medium text-[#E5E7EB] bg-[#1F222A] hover:bg-[#2A2F3B] border border-[#2C303A] rounded cursor-pointer"
+                    onClick={() => projectFileRef.current?.click()}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-medium text-[#E5E7EB] bg-[#1F222A] hover:bg-[#2A2F3B] border border-[#2C303A] rounded cursor-pointer"
                   >
-                    <Save className="w-3 h-3" />
-                    <span>Save Project</span>
+                    <FolderOpen className="w-3 h-3" />
+                    <span>Open Project File</span>
                   </button>
-                )}
-                {onLoadProjectFile && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => projectFileRef.current?.click()}
-                      className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-[11px] font-medium text-[#E5E7EB] bg-[#1F222A] hover:bg-[#2A2F3B] border border-[#2C303A] rounded cursor-pointer"
-                    >
-                      <FolderOpen className="w-3 h-3" />
-                      <span>Open Project</span>
-                    </button>
-                    <input
-                      ref={projectFileRef}
-                      type="file"
-                      accept=".json,application/json"
-                      className="hidden"
-                      onChange={(e) => {
-                        const f = e.target.files?.[0];
-                        if (f) {
-                          onLoadProjectFile(f);
-                          setShowShortcuts(false);
-                          e.target.value = '';
-                        }
-                      }}
-                    />
-                  </>
-                )}
-              </div>
-            )}
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-[#8E939E]">Start fresh</span>
-              <button
-                type="button"
-                onClick={() => {
-                  onResetProject();
-                  setShowShortcuts(false);
-                }}
-                className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-[#FCA5A5] hover:text-white bg-[#1F222A] hover:bg-[#DC2626]/25 border border-[#2C303A] rounded cursor-pointer"
-              >
-                <RotateCcw className="w-3 h-3" />
-                <span>Reset Project</span>
-              </button>
+                  <input
+                    ref={projectFileRef}
+                    type="file"
+                    accept=".json,application/json"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) {
+                        onLoadProjectFile(f);
+                        closeShortcuts();
+                        e.target.value = '';
+                      }
+                    }}
+                  />
+                </>
+              )}
             </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                onResetProject();
+                closeShortcuts();
+              }}
+              className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium text-[#FCA5A5] hover:text-white bg-[#1F222A] hover:bg-[#DC2626]/25 border border-[#2C303A] rounded cursor-pointer"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>Reset Project</span>
+            </button>
           </div>
         </div>
       )}

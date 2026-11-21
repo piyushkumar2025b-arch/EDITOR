@@ -379,6 +379,17 @@ export function getPiPLayoutTransform(
         cropTop: 0,
         cropBottom: 0,
       };
+    case 'pip-circle':
+      return {
+        ...current,
+        x: 340,
+        y: -185,
+        scale: 32,
+        cropLeft: 12,
+        cropRight: 12,
+        cropTop: 0,
+        cropBottom: 0,
+      };
   }
 }
 
@@ -416,4 +427,42 @@ export function slipClipSource(
 ): TimelineClip[] {
   const clamped = Math.max(0, Number(nextSourceIn.toFixed(3)));
   return clips.map((c) => (c.id === clipId ? { ...c, sourceIn: clamped } : c));
+}
+
+export function pasteClipAtTime(
+  clips: TimelineClip[],
+  sourceClip: TimelineClip,
+  targetTime: number
+): { clips: TimelineClip[]; newClipId: string } {
+  const newClipId = `${sourceClip.id}_copy_${Math.random().toString(36).slice(2, 6)}`;
+  const cloned: TimelineClip = {
+    ...structuredClone(sourceClip),
+    id: newClipId,
+    startTime: Math.max(0, Number(targetTime.toFixed(3))),
+  };
+  return { clips: [...clips, cloned], newClipId };
+}
+
+export function getAdjacentCutTime(
+  clips: TimelineClip[],
+  markers: { time: number }[],
+  currentTime: number,
+  direction: 'prev' | 'next'
+): number {
+  const pts = new Set<number>([0]);
+  for (const c of clips) {
+    pts.add(Number(c.startTime.toFixed(3)));
+    pts.add(Number((c.startTime + c.duration).toFixed(3)));
+  }
+  for (const m of markers) {
+    pts.add(Number(m.time.toFixed(3)));
+  }
+  const sorted = Array.from(pts).sort((a, b) => a - b);
+  if (direction === 'next') {
+    const found = sorted.find((t) => t > currentTime + 0.02);
+    return found ?? sorted[sorted.length - 1] ?? currentTime;
+  }
+  const reversed = [...sorted].reverse();
+  const found = reversed.find((t) => t < currentTime - 0.02);
+  return found ?? 0;
 }

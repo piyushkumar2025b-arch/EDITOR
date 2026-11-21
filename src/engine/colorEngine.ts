@@ -33,6 +33,14 @@ export const DEFAULT_EFFECTS: ClipEffects = {
   borderWidth: 0,
   borderColor: '#FFFFFF',
   dropShadow: 0,
+  chromatic: 0,
+  posterize: 0,
+  threshold: 0,
+  lightLeak: 0,
+  scanlines: 0,
+  tiltShift: 0,
+  mirrorMode: 'none',
+  maskShape: 'rect',
 };
 
 export const DEFAULT_CURVE: CurvePoint[] = [
@@ -163,6 +171,50 @@ export const LUT_PRESETS: LUTDefinition[] = [
     description: 'Warm amber midtones and gentle sunlight glow',
     apply: (r, g, b) => [r * 1.08 + 0.02, g * 1.02 + 0.01, b * 0.89],
   },
+  {
+    id: 'cyberpunk-neon',
+    name: 'Cyberpunk Neon',
+    shortName: 'Neon',
+    description: 'Vibrant magenta-cyan contrast with electric shadows',
+    apply: (r, g, b) => [
+      r * 1.12 + 0.03 * (1 - g),
+      g * 0.9 + 0.04 * b,
+      b * 1.16 + 0.05 * (1 - r),
+    ],
+  },
+  {
+    id: 'pastel-dream',
+    name: 'Pastel Dream',
+    shortName: 'Pastel',
+    description: 'Soft lifted shadows and airy peach-blue highlights',
+    apply: (r, g, b) => [
+      r * 0.86 + 0.11,
+      g * 0.86 + 0.09,
+      b * 0.88 + 0.12,
+    ],
+  },
+  {
+    id: 'vintage-polaroid',
+    name: 'Instant Polaroid',
+    shortName: 'Polaroid',
+    description: 'Creamy highlights with nostalgic green-gold shadows',
+    apply: (r, g, b) => [
+      r * 0.96 + 0.04,
+      g * 0.98 + 0.03,
+      b * 0.84 + 0.06,
+    ],
+  },
+  {
+    id: 'emerald-forest',
+    name: 'Emerald Cinema',
+    shortName: 'Emerald',
+    description: 'Moody cool greens and crisp shadow depth',
+    apply: (r, g, b) => [
+      r * 0.91,
+      g * 1.04 + 0.015,
+      b * 0.96 + 0.02,
+    ],
+  },
 ];
 
 export interface PhotoStylePreset {
@@ -273,6 +325,81 @@ export const PHOTO_STYLE_PRESETS: PhotoStylePreset[] = [
     }),
     effects: { vintageFade: 34, glow: 14, sepia: 0 },
   },
+  {
+    id: 'cyber-neon',
+    label: 'Cyber Neon',
+    buildGrade: () => ({
+      ...createDefaultColorGrade(),
+      lut: 'cyberpunk-neon',
+      lutIntensity: 90,
+      contrast: 18,
+      vibrance: 24,
+      vignette: -24,
+    }),
+    effects: { glow: 18, chromatic: 22 },
+  },
+  {
+    id: 'retro-polaroid',
+    label: 'Retro Polaroid',
+    buildGrade: () => ({
+      ...createDefaultColorGrade(),
+      lut: 'vintage-polaroid',
+      lutIntensity: 85,
+      temperature: 10,
+      grain: 16,
+      vignette: -14,
+    }),
+    effects: { vintageFade: 24, borderWidth: 10, borderColor: '#F3F4F6' },
+  },
+];
+
+export interface EffectPreset {
+  id: string;
+  label: string;
+  patch: Partial<ClipEffects>;
+}
+
+export const EFFECT_PRESETS: EffectPreset[] = [
+  {
+    id: 'clean',
+    label: 'Clean',
+    patch: { ...DEFAULT_EFFECTS },
+  },
+  {
+    id: 'dreamy-glow',
+    label: 'Dreamy Glow',
+    patch: { ...DEFAULT_EFFECTS, glow: 48, vintageFade: 18, blur: 0.5 },
+  },
+  {
+    id: 'rgb-glitch',
+    label: 'RGB Glitch',
+    patch: { ...DEFAULT_EFFECTS, chromatic: 55, scanlines: 35 },
+  },
+  {
+    id: 'retro-vhs',
+    label: 'Retro VHS',
+    patch: { ...DEFAULT_EFFECTS, vintageFade: 30, scanlines: 52, chromatic: 28, sepia: 18 },
+  },
+  {
+    id: 'pop-poster',
+    label: 'Pop Poster',
+    patch: { ...DEFAULT_EFFECTS, posterize: 5 },
+  },
+  {
+    id: 'sunset-leak',
+    label: 'Light Leak',
+    patch: { ...DEFAULT_EFFECTS, lightLeak: 65, glow: 22 },
+  },
+  {
+    id: 'mirror-flip',
+    label: 'Mirror',
+    patch: { ...DEFAULT_EFFECTS, mirrorMode: 'mirror-h' },
+  },
+  {
+    id: 'ink-stencil',
+    label: 'Ink Stencil',
+    patch: { ...DEFAULT_EFFECTS, threshold: 48 },
+  },
 ];
 
 export function buildToneCurveLUT(points: CurvePoint[]): Uint8ClampedArray {
@@ -340,7 +467,15 @@ export function isEffectsIdentity(effects?: ClipEffects): boolean {
     (effects.pixelate ?? 0) === 0 &&
     !effects.invert &&
     (effects.borderWidth ?? 0) === 0 &&
-    (effects.dropShadow ?? 0) === 0
+    (effects.dropShadow ?? 0) === 0 &&
+    (effects.chromatic ?? 0) === 0 &&
+    (effects.posterize ?? 0) === 0 &&
+    (effects.threshold ?? 0) === 0 &&
+    (effects.lightLeak ?? 0) === 0 &&
+    (effects.scanlines ?? 0) === 0 &&
+    (effects.tiltShift ?? 0) === 0 &&
+    (!effects.mirrorMode || effects.mirrorMode === 'none') &&
+    (!effects.maskShape || effects.maskShape === 'rect')
   );
 }
 
@@ -409,13 +544,27 @@ function buildGammaTable(gammaVal: number): Float32Array {
 export function applyColorGradeToImageData(
   data: Uint8ClampedArray,
   grade: ColorGrade,
-  effects?: ClipEffects
+  effects?: ClipEffects,
+  imageWidth?: number
 ): void {
   const gradeId = isColorGradeIdentity(grade);
   const sepiaAmt = effects ? effects.sepia / 100 : 0;
   const fadeAmt = effects ? effects.vintageFade / 100 : 0;
   const invertFlag = Boolean(effects?.invert);
-  if (gradeId && sepiaAmt === 0 && fadeAmt === 0 && !invertFlag) return;
+  const posterLevels = effects?.posterize ?? 0;
+  const threshVal = effects?.threshold ?? 0;
+  const chromAmt = effects?.chromatic ?? 0;
+  if (
+    gradeId &&
+    sepiaAmt === 0 &&
+    fadeAmt === 0 &&
+    !invertFlag &&
+    posterLevels < 2 &&
+    threshVal <= 0 &&
+    chromAmt <= 0
+  ) {
+    return;
+  }
 
   const lutDef = LUT_PRESETS.find((l) => l.id === grade.lut) ?? LUT_PRESETS[0];
   const lutMix = grade.lut === 'none' ? 0 : grade.lutIntensity / 100;
@@ -613,12 +762,45 @@ export function applyColorGradeToImageData(
       b = 1 - b;
     }
 
+    if (posterLevels >= 2) {
+      const levels = posterLevels - 1;
+      r = Math.round(Math.max(0, Math.min(1, r)) * levels) / levels;
+      g = Math.round(Math.max(0, Math.min(1, g)) * levels) / levels;
+      b = Math.round(Math.max(0, Math.min(1, b)) * levels) / levels;
+    }
+
+    if (threshVal > 0) {
+      const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      const bw = lum >= threshVal / 100 ? 1 : 0;
+      r = bw;
+      g = bw;
+      b = bw;
+    }
+
     const rr = r * 255 + 0.5;
     const gg = g * 255 + 0.5;
     const bb = b * 255 + 0.5;
     data[i] = rr < 0 ? 0 : rr > 255 ? 255 : rr | 0;
     data[i + 1] = gg < 0 ? 0 : gg > 255 ? 255 : gg | 0;
     data[i + 2] = bb < 0 ? 0 : bb > 255 ? 255 : bb | 0;
+  }
+
+  // Chromatic Aberration (RGB Channel Split)
+  if (chromAmt > 0) {
+    const shiftPx = Math.max(1, Math.round((chromAmt / 100) * 14));
+    const snap = new Uint8ClampedArray(data);
+    const w = imageWidth && imageWidth > 0 ? imageWidth : Math.max(1, Math.round(Math.sqrt(len / 4)));
+    const h = Math.floor(len / (w * 4));
+    for (let y = 0; y < h; y++) {
+      const rowStart = y * w * 4;
+      for (let x = 0; x < w; x++) {
+        const dst = rowStart + x * 4;
+        const rx = Math.max(0, x - shiftPx);
+        const bx = Math.min(w - 1, x + shiftPx);
+        data[dst] = snap[rowStart + rx * 4];
+        data[dst + 2] = snap[rowStart + bx * 4 + 2];
+      }
+    }
   }
 }
 

@@ -1,0 +1,223 @@
+import { generateSynthWaveform } from './audioSynth';
+import { createDefaultColorGrade, DEFAULT_TRANSFORM } from './colorEngine';
+import { MediaAsset, ProjectState } from './types';
+
+export function createSeedProject(): ProjectState {
+  const streetGrade = createDefaultColorGrade();
+  streetGrade.lut = 'kodak-2383';
+  streetGrade.lutIntensity = 75;
+  streetGrade.contrast = 8;
+
+  const portraitGrade = createDefaultColorGrade();
+  portraitGrade.exposure = 0.15;
+  portraitGrade.shadows = 12;
+  portraitGrade.vibrance = 10;
+
+  const alpineGrade = createDefaultColorGrade();
+  alpineGrade.lut = 'golden-hour';
+  alpineGrade.lutIntensity = 60;
+  alpineGrade.contrast = 12;
+  alpineGrade.highlights = -14;
+
+  const assets: MediaAsset[] = [
+    {
+      id: 'asset_street',
+      name: 'A004_C012_RainDusk_35mm.jpg',
+      kind: 'image',
+      src: '/src/assets/images/cinema_street_tokyo_1795237160816.jpg',
+      duration: 6.0,
+      width: 1920,
+      height: 1080,
+      fps: 24,
+      codec: 'RAW Still · 16-bit',
+      createdAt: '2026-11-20',
+    },
+    {
+      id: 'asset_portrait',
+      name: 'A004_C018_StudioPortrait.jpg',
+      kind: 'image',
+      src: '/src/assets/images/editorial_portrait_studio_1795237160683.jpg',
+      duration: 5.5,
+      width: 1600,
+      height: 1200,
+      fps: 24,
+      codec: 'Medium Format · DNG',
+      createdAt: '2026-11-20',
+    },
+    {
+      id: 'asset_alpine',
+      name: 'B002_C007_AlpineAerial_4K.jpg',
+      kind: 'image',
+      src: '/src/assets/images/alpine_aerial_landscape_1795237161237.jpg',
+      duration: 6.5,
+      width: 1920,
+      height: 1080,
+      fps: 24,
+      codec: 'ProRes 422 HQ Still',
+      createdAt: '2026-11-20',
+    },
+    {
+      id: 'asset_score',
+      name: 'Score_Nocturne_Stem_24bit.wav',
+      kind: 'audio',
+      src: '',
+      duration: 18.0,
+      width: 0,
+      height: 0,
+      fps: 24,
+      codec: 'Linear PCM · 48kHz',
+      sampleRate: 48000,
+      waveformPeaks: generateSynthWaveform('cinema-pad', 120),
+      synthPreset: 'cinema-pad',
+      createdAt: '2026-11-20',
+    },
+    {
+      id: 'asset_foley',
+      name: 'Ambience_Rain_Atmos_Stems.wav',
+      kind: 'audio',
+      src: '',
+      duration: 12.0,
+      width: 0,
+      height: 0,
+      fps: 24,
+      codec: 'Linear PCM · 48kHz',
+      sampleRate: 48000,
+      waveformPeaks: generateSynthWaveform('foley-pulse', 96),
+      synthPreset: 'foley-pulse',
+      createdAt: '2026-11-20',
+    },
+  ];
+
+  return {
+    sequence: {
+      name: 'Reel 01 — Editorial Master',
+      width: 1920,
+      height: 1080,
+      fps: 24,
+      inPoint: 0,
+      outPoint: 18,
+    },
+    tracks: [
+      { id: 'v3', name: 'V3', type: 'video', index: 2, muted: false, solo: false, locked: false, visible: true, gainDb: 0 },
+      { id: 'v2', name: 'V2', type: 'video', index: 1, muted: false, solo: false, locked: false, visible: true, gainDb: 0 },
+      { id: 'v1', name: 'V1', type: 'video', index: 0, muted: false, solo: false, locked: false, visible: true, gainDb: 0 },
+      { id: 'a1', name: 'A1', type: 'audio', index: 0, muted: false, solo: false, locked: false, visible: true, gainDb: 0 },
+      { id: 'a2', name: 'A2', type: 'audio', index: 1, muted: false, solo: false, locked: false, visible: true, gainDb: -4 },
+    ],
+    clips: [
+      {
+        id: 'clip_1',
+        assetId: 'asset_street',
+        trackId: 'v1',
+        name: 'A004_C012_RainDusk',
+        kind: 'image',
+        startTime: 0,
+        duration: 6.0,
+        sourceIn: 0,
+        speed: 1,
+        fadeIn: 0.4,
+        fadeOut: 0.3,
+        gainDb: 0,
+        transform: { ...DEFAULT_TRANSFORM, kenBurnsZoom: 6 },
+        color: streetGrade,
+      },
+      {
+        id: 'clip_2',
+        assetId: 'asset_portrait',
+        trackId: 'v1',
+        name: 'A004_C018_Portrait',
+        kind: 'image',
+        startTime: 6.0,
+        duration: 5.5,
+        sourceIn: 0,
+        speed: 1,
+        fadeIn: 0.25,
+        fadeOut: 0.25,
+        gainDb: 0,
+        transform: { ...DEFAULT_TRANSFORM, kenBurnsZoom: 4 },
+        color: portraitGrade,
+      },
+      {
+        id: 'clip_3',
+        assetId: 'asset_alpine',
+        trackId: 'v1',
+        name: 'B002_C007_AlpineAerial',
+        kind: 'image',
+        startTime: 11.5,
+        duration: 6.5,
+        sourceIn: 0,
+        speed: 1,
+        fadeIn: 0.3,
+        fadeOut: 0.6,
+        gainDb: 0,
+        transform: { ...DEFAULT_TRANSFORM, kenBurnsZoom: 8 },
+        color: alpineGrade,
+      },
+      {
+        id: 'clip_title_1',
+        assetId: 'title_gen',
+        trackId: 'v3',
+        name: 'Lower Third — Director',
+        kind: 'title',
+        startTime: 6.4,
+        duration: 4.2,
+        sourceIn: 0,
+        speed: 1,
+        fadeIn: 0.3,
+        fadeOut: 0.3,
+        gainDb: 0,
+        transform: { ...DEFAULT_TRANSFORM },
+        color: createDefaultColorGrade(),
+        textOverlay: {
+          text: 'ELENA VANCE',
+          subtitle: 'CREATIVE DIRECTOR · STUDIO ARCHIVE',
+          fontSize: 30,
+          fontWeight: 700,
+          color: '#F4F5F7',
+          backgroundColor: '#111214',
+          backgroundOpacity: 82,
+          align: 'left',
+          letterSpacing: 0.04,
+          lowerThird: true,
+        },
+      },
+      {
+        id: 'clip_audio_1',
+        assetId: 'asset_score',
+        trackId: 'a1',
+        name: 'Score_Nocturne_Stem',
+        kind: 'audio',
+        startTime: 0,
+        duration: 18.0,
+        sourceIn: 0,
+        speed: 1,
+        fadeIn: 0.8,
+        fadeOut: 1.2,
+        gainDb: -2,
+        transform: { ...DEFAULT_TRANSFORM },
+        color: createDefaultColorGrade(),
+      },
+      {
+        id: 'clip_audio_2',
+        assetId: 'asset_foley',
+        trackId: 'a2',
+        name: 'Ambience_Rain_Atmos',
+        kind: 'audio',
+        startTime: 0,
+        duration: 6.2,
+        sourceIn: 0,
+        speed: 1,
+        fadeIn: 0.2,
+        fadeOut: 0.8,
+        gainDb: -5,
+        transform: { ...DEFAULT_TRANSFORM },
+        color: createDefaultColorGrade(),
+      },
+    ],
+    markers: [
+      { id: 'm1', time: 6.0, label: 'Portrait Cut', color: 'amber' },
+      { id: 'm2', time: 11.5, label: 'Aerial Resolve', color: 'blue' },
+    ],
+    assets,
+  };
+}

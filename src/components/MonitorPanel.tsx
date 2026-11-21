@@ -11,6 +11,8 @@ import {
   Repeat,
   RotateCcw,
   SplitSquareHorizontal,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { secondsToTimecode } from '../engine/timecode';
 import {
@@ -28,6 +30,7 @@ interface MonitorPanelProps {
   duration: number;
   isPlaying: boolean;
   isLooping: boolean;
+  isMuted?: boolean;
   playbackRate: number;
   sourceAsset: MediaAsset | null;
   selectedClip: TimelineClip | null;
@@ -35,6 +38,7 @@ interface MonitorPanelProps {
   showDualMonitor: boolean;
   onToggleDualMonitor: () => void;
   onTogglePlay: () => void;
+  onToggleMute?: () => void;
   onChangePlaybackRate: (rate: number) => void;
   onStepFrame: (delta: number) => void;
   onSeek: (time: number) => void;
@@ -54,6 +58,7 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
   duration,
   isPlaying,
   isLooping,
+  isMuted = false,
   playbackRate,
   sourceAsset,
   selectedClip,
@@ -61,6 +66,7 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
   showDualMonitor,
   onToggleDualMonitor,
   onTogglePlay,
+  onToggleMute,
   onChangePlaybackRate,
   onStepFrame,
   onSeek,
@@ -458,8 +464,24 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
           </button>
         </div>
 
-        {/* Right: Playback Speed + Loop */}
-        <div className="flex items-center justify-end gap-1.5 min-w-[140px]">
+        {/* Right: Sound Toggle + Playback Speed + Loop */}
+        <div className="flex items-center justify-end gap-1.5 min-w-[160px]">
+          {onToggleMute && (
+            <button
+              type="button"
+              onClick={onToggleMute}
+              aria-pressed={isMuted}
+              aria-label={isMuted ? 'Unmute Preview Sound' : 'Mute Preview Sound'}
+              title={isMuted ? 'Unmute Preview Sound' : 'Mute Preview Sound'}
+              className={`p-1.5 rounded border cursor-pointer transition-colors ${
+                isMuted
+                  ? 'bg-[#EF4444]/15 border-[#EF4444]/50 text-[#FCA5A5]'
+                  : 'bg-[#1B1D23] border-[#282B33] text-[#C7CBD4] hover:text-white'
+              }`}
+            >
+              {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+            </button>
+          )}
           <select
             aria-label="Playback Speed"
             value={playbackRate}

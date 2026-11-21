@@ -150,13 +150,34 @@ function drawTitleOverlay(
   clip: TimelineClip,
   w: number,
   h: number,
-  alpha: number
+  alpha: number,
+  relTime: number
 ) {
   const overlay = clip.textOverlay;
   if (!overlay) return;
 
+  const anim = overlay.animation ?? 'none';
+  const enterT = Math.min(1, Math.max(0, relTime / 0.55));
+  const ease = 1 - Math.pow(1 - enterT, 3);
+  let animAlpha = alpha;
+  let animY = 0;
+  let animScale = 1;
+  let displayText = overlay.text;
+
+  if (anim === 'fade-up') {
+    animAlpha *= 0.25 + 0.75 * ease;
+    animY = (1 - ease) * 24 * (h / 720);
+  } else if (anim === 'pop-in') {
+    animAlpha *= 0.25 + 0.75 * ease;
+    animScale = 0.76 + 0.24 * ease;
+  } else if (anim === 'typewriter') {
+    const typeProgress = Math.min(1, Math.max(0.15, relTime / Math.min(clip.duration * 0.7, 1.8)));
+    const charCount = Math.max(1, Math.ceil(overlay.text.length * typeProgress));
+    displayText = overlay.text.slice(0, charCount);
+  }
+
   ctx.save();
-  ctx.globalAlpha = alpha;
+  ctx.globalAlpha = animAlpha;
   const scaleFactor = Math.min(w, h) / 720;
   const fontSize = Math.max(14, Math.round(overlay.fontSize * scaleFactor));
   const subFontSize = Math.max(11, Math.round(fontSize * 0.48));
@@ -169,11 +190,15 @@ function drawTitleOverlay(
 
   ctx.translate(
     w / 2 + clip.transform.x * (w / 1280),
-    h / 2 + clip.transform.y * (h / 720)
+    h / 2 + clip.transform.y * (h / 720) + animY
   );
   ctx.rotate((clip.transform.rotation * Math.PI) / 180);
-  const s = clip.transform.scale / 100;
+  const s = (clip.transform.scale / 100) * animScale;
   ctx.scale(s, s);
+
+  if (typeof (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing === 'string') {
+    (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = `${(overlay.letterSpacing ?? 0).toFixed(2)}em`;
+  }
 
   if (overlay.textShadow) {
     ctx.shadowColor = 'rgba(0, 0, 0, 0.75)';
@@ -181,15 +206,28 @@ function drawTitleOverlay(
     ctx.shadowOffsetY = 2 * scaleFactor;
   }
 
+  const outlineW = (overlay.outlineWidth ?? 0) * scaleFactor;
+  const drawStyledText = (txt: string, x: number, y: number) => {
+    if (outlineW > 0.2) {
+      ctx.save();
+      ctx.lineWidth = outlineW * 2;
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = overlay.outlineColor || '#000000';
+      ctx.strokeText(txt, x, y);
+      ctx.restore();
+    }
+    ctx.fillText(txt, x, y);
+  };
+
   if (overlay.stylePreset === 'caption') {
     ctx.font = `600 ${Math.max(14, Math.round(fontSize * 0.72))}px ${fontStack}`;
-    const textW = ctx.measureText(overlay.text).width;
+    const textW = ctx.measureText(displayText).width;
     const padX = 18 * scaleFactor;
     const padY = 10 * scaleFactor;
     const cy = h * 0.36;
     if (overlay.backgroundOpacity > 0) {
       ctx.fillStyle = overlay.backgroundColor;
-      ctx.globalAlpha = alpha * (overlay.backgroundOpacity / 100);
+      ctx.globalAlpha = animAlpha * (overlay.backgroundOpacity / 100);
       drawRoundedRectPath(
         ctx,
         -textW / 2 - padX,
@@ -199,12 +237,12 @@ function drawTitleOverlay(
         6 * scaleFactor
       );
       ctx.fill();
-      ctx.globalAlpha = alpha;
+      ctx.globalAlpha = animAlpha;
     }
     ctx.fillStyle = overlay.color;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(overlay.text, 0, cy);
+    drawStyledText(displayText, 0, cy);
   } else if (overlay.lowerThird) {
     const boxW = w * 0.48;
     const boxH = fontSize * 2.1;
@@ -213,9 +251,9 @@ function drawTitleOverlay(
 
     if (overlay.backgroundOpacity > 0) {
       ctx.fillStyle = overlay.backgroundColor;
-      ctx.globalAlpha = alpha * (overlay.backgroundOpacity / 100);
+      ctx.globalAlpha = animAlpha * (overlay.backgroundOpacity / 100);
       ctx.fillRect(bx, by, boxW, boxH);
-      ctx.globalAlpha = alpha;
+      ctx.globalAlpha = animAlpha;
     }
 
     ctx.fillStyle = '#3B82F6';
@@ -225,7 +263,7 @@ function drawTitleOverlay(
     ctx.fillStyle = overlay.color;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText(overlay.text, bx + 18 * scaleFactor, by + 12 * scaleFactor);
+    drawStyledText(displayText, bx + 18 * scaleFactor, by + 12 * scaleFactor);
 
     if (overlay.subtitle) {
       ctx.font = `500 ${subFontSize}px "JetBrains Mono", monospace`;
@@ -234,13 +272,13 @@ function drawTitleOverlay(
     }
   } else {
     ctx.font = `${overlay.fontWeight} ${fontSize}px ${fontStack}`;
-    const metrics = ctx.measureText(overlay.text);
+    const metrics = ctx.measureText(displayText);
     const padX = 26 * scaleFactor;
     const padY = 16 * scaleFactor;
 
     if (overlay.backgroundOpacity > 0) {
       ctx.fillStyle = overlay.backgroundColor;
-      ctx.globalAlpha = alpha * (overlay.backgroundOpacity / 100);
+      ctx.globalAlpha = animAlpha * (overlay.backgroundOpacity / 100);
       drawRoundedRectPath(
         ctx,
         -metrics.width / 2 - padX,
@@ -250,14 +288,14 @@ function drawTitleOverlay(
         overlay.stylePreset === 'tag' ? 6 * scaleFactor : 0
       );
       ctx.fill();
-      ctx.globalAlpha = alpha;
+      ctx.globalAlpha = animAlpha;
     }
 
     ctx.fillStyle = overlay.color;
     ctx.textAlign = overlay.align;
     ctx.textBaseline = 'middle';
     const xPos = overlay.align === 'left' ? -w * 0.35 : overlay.align === 'right' ? w * 0.35 : 0;
-    ctx.fillText(overlay.text, xPos, overlay.subtitle ? -subFontSize * 0.45 : 0);
+    drawStyledText(displayText, xPos, overlay.subtitle ? -subFontSize * 0.45 : 0);
 
     if (overlay.subtitle) {
       ctx.font = `500 ${subFontSize}px "JetBrains Mono", monospace`;
@@ -288,12 +326,31 @@ function getOrBuildGradedImageCanvas(
   const offCtx = off.getContext('2d', { willReadFrequently: true });
   if (!offCtx) return null;
 
+  const pixBlock = clip.effects?.pixelate ?? 0;
   const blurPx = clip.effects?.blur ?? 0;
-  if (blurPx > 0) {
-    offCtx.filter = `blur(${blurPx}px)`;
+
+  if (pixBlock > 1) {
+    const pw = Math.max(4, Math.round(rw / pixBlock));
+    const ph = Math.max(4, Math.round(rh / pixBlock));
+    const mini = document.createElement('canvas');
+    mini.width = pw;
+    mini.height = ph;
+    const mCtx = mini.getContext('2d');
+    if (mCtx) {
+      mCtx.drawImage(img, 0, 0, pw, ph);
+      offCtx.imageSmoothingEnabled = false;
+      offCtx.drawImage(mini, 0, 0, rw, rh);
+      offCtx.imageSmoothingEnabled = true;
+    } else {
+      offCtx.drawImage(img, 0, 0, rw, rh);
+    }
+  } else {
+    if (blurPx > 0) {
+      offCtx.filter = `blur(${blurPx}px)`;
+    }
+    offCtx.drawImage(img, 0, 0, rw, rh);
+    offCtx.filter = 'none';
   }
-  offCtx.drawImage(img, 0, 0, rw, rh);
-  offCtx.filter = 'none';
 
   if (!isColorGradeIdentity(clip.color) || !isEffectsIdentity(clip.effects)) {
     const imgData = offCtx.getImageData(0, 0, rw, rh);
@@ -383,7 +440,7 @@ export function renderClipToCanvas(
   if (finalAlpha <= 0.001) return;
 
   if (clip.kind === 'title') {
-    drawTitleOverlay(ctx, clip, canvasWidth, canvasHeight, finalAlpha);
+    drawTitleOverlay(ctx, clip, canvasWidth, canvasHeight, finalAlpha, relTime);
     return;
   }
 
@@ -439,6 +496,8 @@ export function renderClipToCanvas(
   // Apply Camera Motion Preset + Ken Burns Zoom
   let motionScale = 1 + (clip.transform.kenBurnsZoom / 100) * progress;
   let motionPanX = 0;
+  let motionPanY = 0;
+  let motionRotDeg = 0;
   const motion = clip.transform.motionPreset ?? 'none';
   if (motion === 'zoom-in') {
     motionScale *= 1 + 0.14 * progress;
@@ -450,6 +509,14 @@ export function renderClipToCanvas(
   } else if (motion === 'pan-right') {
     motionScale *= 1.12;
     motionPanX = (progress - 0.5) * drawW * 0.09;
+  } else if (motion === 'slide-up') {
+    const enterEase = 1 - Math.pow(1 - Math.min(1, relTime / 0.7), 3);
+    motionPanY = (1 - enterEase) * canvasHeight * 0.28;
+  } else if (motion === 'tilt-drift') {
+    motionScale *= 1.08 + 0.05 * progress;
+    motionRotDeg = (progress - 0.5) * 4;
+  } else if (motion === 'pulse') {
+    motionScale *= 1 + 0.04 * Math.sin(relTime * Math.PI * 2.2);
   }
 
   const cTop = (clip.transform.cropTop / 100) * drawH;
@@ -459,8 +526,12 @@ export function renderClipToCanvas(
 
   const scaleXFactor = canvasWidth / 1280;
   const scaleYFactor = canvasHeight / 720;
+  const minScaleFactor = Math.min(scaleXFactor, scaleYFactor);
   const totalScale = (clip.transform.scale / 100) * motionScale * transitionScaleBoost;
-  const cornerRad = (clip.effects?.cornerRadius ?? 0) * Math.min(scaleXFactor, scaleYFactor);
+  const cornerRad = (clip.effects?.cornerRadius ?? 0) * minScaleFactor;
+  const borderW = (clip.effects?.borderWidth ?? 0) * minScaleFactor;
+  const borderColor = clip.effects?.borderColor ?? '#FFFFFF';
+  const dropShadowPx = (clip.effects?.dropShadow ?? 0) * minScaleFactor;
 
   let sourceToDraw: CanvasImageSource = mediaSource;
   let videoNeedsScratchGrade = false;
@@ -476,6 +547,11 @@ export function renderClipToCanvas(
     }
   }
 
+  const croppedW = Math.max(1, drawW - cLeft - cRight);
+  const croppedH = Math.max(1, drawH - cTop - cBottom);
+  const cropX = -drawW / 2 + cLeft;
+  const cropY = -drawH / 2 + cTop;
+
   if (videoNeedsScratchGrade) {
     const sCtx = getScratchContext(canvasWidth, canvasHeight);
     if (!sCtx) return;
@@ -483,21 +559,14 @@ export function renderClipToCanvas(
     sCtx.save();
     sCtx.translate(
       canvasWidth / 2 + clip.transform.x * scaleXFactor + motionPanX + slideOffsetX,
-      canvasHeight / 2 + clip.transform.y * scaleYFactor
+      canvasHeight / 2 + clip.transform.y * scaleYFactor + motionPanY
     );
-    sCtx.rotate((clip.transform.rotation * Math.PI) / 180);
+    sCtx.rotate(((clip.transform.rotation + motionRotDeg) * Math.PI) / 180);
     sCtx.scale(
       totalScale * (clip.transform.flipH ? -1 : 1),
       totalScale * (clip.transform.flipV ? -1 : 1)
     );
-    drawRoundedRectPath(
-      sCtx,
-      -drawW / 2 + cLeft,
-      -drawH / 2 + cTop,
-      Math.max(1, drawW - cLeft - cRight),
-      Math.max(1, drawH - cTop - cBottom),
-      cornerRad
-    );
+    drawRoundedRectPath(sCtx, cropX, cropY, croppedW, croppedH, cornerRad);
     sCtx.clip();
     const blurPx = clip.effects?.blur ?? 0;
     if (blurPx > 0) sCtx.filter = `blur(${blurPx}px)`;
@@ -548,23 +617,37 @@ export function renderClipToCanvas(
   ctx.save();
   ctx.translate(
     canvasWidth / 2 + clip.transform.x * scaleXFactor + motionPanX + slideOffsetX,
-    canvasHeight / 2 + clip.transform.y * scaleYFactor
+    canvasHeight / 2 + clip.transform.y * scaleYFactor + motionPanY
   );
-  ctx.rotate((clip.transform.rotation * Math.PI) / 180);
+  ctx.rotate(((clip.transform.rotation + motionRotDeg) * Math.PI) / 180);
   ctx.scale(
     totalScale * (clip.transform.flipH ? -1 : 1),
     totalScale * (clip.transform.flipV ? -1 : 1)
   );
-  drawRoundedRectPath(
-    ctx,
-    -drawW / 2 + cLeft,
-    -drawH / 2 + cTop,
-    Math.max(1, drawW - cLeft - cRight),
-    Math.max(1, drawH - cTop - cBottom),
-    cornerRad
-  );
+
+  if (dropShadowPx > 0.5) {
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.72)';
+    ctx.shadowBlur = dropShadowPx;
+    ctx.shadowOffsetY = dropShadowPx * 0.25;
+    drawRoundedRectPath(ctx, cropX, cropY, croppedW, croppedH, cornerRad);
+    ctx.fillStyle = '#000000';
+    ctx.fill();
+    ctx.restore();
+  }
+
+  ctx.save();
+  drawRoundedRectPath(ctx, cropX, cropY, croppedW, croppedH, cornerRad);
   ctx.clip();
   ctx.drawImage(sourceToDraw, -drawW / 2, -drawH / 2, drawW, drawH);
+  ctx.restore();
+
+  if (borderW > 0.25) {
+    drawRoundedRectPath(ctx, cropX, cropY, croppedW, croppedH, cornerRad);
+    ctx.strokeStyle = borderColor;
+    ctx.lineWidth = borderW;
+    ctx.stroke();
+  }
   ctx.restore();
 
   if (!skipColorGrade && (clip.color.vignette !== 0 || clip.color.grain > 0)) {

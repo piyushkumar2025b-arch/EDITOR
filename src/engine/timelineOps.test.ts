@@ -8,12 +8,14 @@ import {
 } from './timecode';
 import {
   addTrack,
+  applyColorGradeToAllClips,
   changeClipSpeed,
   closeTrackGaps,
   splitAllAtTime,
   splitClipAtTime,
   moveClip,
   nudgeClip,
+  slipClipSource,
   trimClip,
   trimClipToPlayhead,
   deleteClip,
@@ -21,7 +23,7 @@ import {
   getPiPLayoutTransform,
   getSequenceDimensionsForRatio,
 } from './timelineOps';
-import { DEFAULT_TRANSFORM } from './colorEngine';
+import { createDefaultColorGrade, DEFAULT_TRANSFORM } from './colorEngine';
 import { createSeedProject } from './seedProject';
 
 test('secondsToTimecode and timecodeToSeconds roundtrip accurately at 24fps', () => {
@@ -171,6 +173,22 @@ test('PiP layout presets and sequence aspect ratio helpers return accurate geome
   const vertical = getSequenceDimensionsForRatio('9:16');
   assert.equal(vertical.width, 1080);
   assert.equal(vertical.height, 1920);
+});
+
+test('applyColorGradeToAllClips copies look to visual clips only and slipClipSource shifts offset', () => {
+  const project = createSeedProject();
+  const customGrade = createDefaultColorGrade();
+  customGrade.exposure = 0.85;
+  customGrade.lut = 'teal-orange';
+
+  const graded = applyColorGradeToAllClips(project.clips, customGrade);
+  const visualClips = graded.filter((c) => c.kind === 'image' || c.kind === 'video');
+  const audioClip = graded.find((c) => c.kind === 'audio');
+  assert.ok(visualClips.every((c) => c.color.lut === 'teal-orange' && c.color.exposure === 0.85));
+  assert.notEqual(audioClip?.color.lut, 'teal-orange');
+
+  const slipped = slipClipSource(graded, 'clip_1', 2.25);
+  assert.equal(slipped.find((c) => c.id === 'clip_1')?.sourceIn, 2.25);
 });
 
 

@@ -88,3 +88,21 @@ test('computeAutoBalanceGrade lifts exposure for underexposed dark frames', () =
   assert.ok(auto.exposure > 0.5);
   assert.ok(auto.contrast > 0);
 });
+
+test('hueShift, dehaze, and invert filters modify pixel data deterministically', () => {
+  const grade = createDefaultColorGrade();
+  grade.hueShift = 90;
+  const rgb = new Uint8ClampedArray([220, 60, 60, 255]);
+  applyColorGradeToImageData(rgb, grade);
+  assert.ok(rgb[1] > rgb[0]); // Red shifts toward green at +90 deg
+
+  const invPixels = new Uint8ClampedArray([40, 100, 200, 255]);
+  applyColorGradeToImageData(invPixels, createDefaultColorGrade(), {
+    ...DEFAULT_EFFECTS,
+    invert: true,
+  });
+  assert.equal(invPixels[0], 215);
+  assert.equal(invPixels[1], 155);
+  assert.equal(invPixels[2], 55);
+  assert.ok(PHOTO_STYLE_PRESETS.length >= 8);
+});

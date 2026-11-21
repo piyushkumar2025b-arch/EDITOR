@@ -8,6 +8,7 @@ import { PhotoStudio } from './components/PhotoStudio';
 import { ScopesPanel } from './components/ScopesPanel';
 import { TimelinePanel } from './components/TimelinePanel';
 import { TopBar } from './components/TopBar';
+import { AudioPreviewEngine } from './engine/audioPlayer';
 import {
   computeLiveStereoLevels,
   extractAudioPeaksFromBuffer,
@@ -28,6 +29,7 @@ import { createSeedProject } from './engine/seedProject';
 import { stepFrames } from './engine/timecode';
 import {
   addTrack,
+  applyColorGradeToAllClips,
   changeClipSpeed,
   closeTrackGaps,
   deleteClip,
@@ -35,6 +37,7 @@ import {
   getSequenceDimensionsForRatio,
   getSequenceDuration,
   moveClip,
+  nudgeClip,
   splitAllAtTime,
   splitClipAtTime,
   trimClip,
@@ -70,6 +73,7 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(0.5);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLooping, setIsLooping] = useState(true);
+  const [isMuted, setIsMuted] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
 
   const [selectedClipId, setSelectedClipId] = useState<string | null>('clip_1');
@@ -79,6 +83,7 @@ export default function App() {
   const [mediaRevision, setMediaRevision] = useState(0);
 
   const programCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const audioEngineRef = useRef<AudioPreviewEngine | null>(null);
   const mediaCacheRef = useRef<LoadedMediaCache>({
     images: new Map(),
     videos: new Map(),
@@ -258,6 +263,28 @@ export default function App() {
     [project.clips, project.tracks, project.assets, currentTime, isPlaying]
   );
 
+  // Sync Web Audio preview playback engine
+  useEffect(() => {
+    if (!audioEngineRef.current) {
+      audioEngineRef.current = new AudioPreviewEngine();
+    }
+    audioEngineRef.current.setMuted(isMuted);
+    audioEngineRef.current.sync(
+      isPlaying,
+      currentTime,
+      playbackRate,
+      project.clips,
+      project.tracks,
+      project.assets
+    );
+  }, [isPlaying, isMuted, currentTime, playbackRate, project.clips, project.tracks, project.assets]);
+
+  useEffect(() => {
+    return () => {
+      audioEngineRef.current?.stopAll();
+    };
+  }, []);
+
   // Clip actions
   const handleUpdateClip = useCallback(
     (clipId: string, updater: (clip: TimelineClip) => TimelineClip) => {
@@ -402,8 +429,8 @@ export default function App() {
         duration: Math.max(1, Math.min(12, asset.duration || 5)),
         sourceIn: 0,
         speed: 1,
-        fadeIn: 0.2,
-        fadeOut: 0.2,
+        fadeIn: asset.kind === 'audio' ? 0.25 : 0,
+        fadeOut: asset.kind === 'audio' ? 0.25 : 0,
         gainDb: 0,
         transform: { ...DEFAULT_TRANSFORM },
         effects: { ...DEFAULT_EFFECTS },
@@ -432,8 +459,8 @@ export default function App() {
         duration: 4.0,
         sourceIn: 0,
         speed: 1,
-        fadeIn: 0.25,
-        fadeOut: 0.25,
+        fadeIn: 0,
+        fadeOut: 0,
         gainDb: 0,
         transform: { ...DEFAULT_TRANSFORM },
         effects: { ...DEFAULT_EFFECTS },
@@ -632,12 +659,26 @@ export default function App() {
         setIsPlaying((p) => !p);
       } else if (e.key === 'ArrowLeft') {
         e.preventDefault();
-        setIsPlaying(false);
-        setCurrentTime((t) => stepFrames(t, -1, project.sequence.fps));
+        if (e.altKey && selectedClipId) {
+          commitProject((prev) => ({
+            ...prev,
+            clips: nudgeClip(prev.clips, selectedClipId, -0.25, prev.tracks),
+          }));
+        } else {
+          setIsPlaying(false);
+          setCurrentTime((t) => stepFrames(t, -1, project.sequence.fps));
+        }
       } else if (e.key === 'ArrowRight') {
         e.preventDefault();
-        setIsPlaying(false);
-        setCurrentTime((t) => stepFrames(t, 1, project.sequence.fps));
+        if (e.altKey && selectedClipId) {
+          commitProject((prev) => ({
+            ...prev,
+            clips: nudgeClip(prev.clips, selectedClipId, 0.25, prev.tracks),
+          }));
+        } else {
+          setIsPlaying(false);
+          setCurrentTime((t) => stepFrames(t, 1, project.sequence.fps));
+        }
       } else if (e.key.toLowerCase() === 'j') {
         setPlaybackRate(-2);
         setIsPlaying(true);
@@ -698,6 +739,10 @@ export default function App() {
         onWorkspaceChange={(ws) => {
           setWorkspace(ws);
           if (ws === 'color' || ws === 'photo') setInspectorTab('color');
+          if (ws === 'photo' && (!selectedClip || (selectedClip.kind !== 'image' && selectedClip.kind !== 'video'))) {
+            const firstPhoto = project.clips.find((c) => c.kind === 'image' || c.kind === 'video');
+            if (firstPhoto) setSelectedClipId(firstPhoto.id);
+          }
         }}
         sequence={project.sequence}
         canUndo={past.length > 0}
@@ -709,6 +754,33 @@ export default function App() {
         showGrid={showGrid}
         onToggleGrid={() => setShowGrid((v) => !v)}
         onResetProject={handleResetProject}
+        onSaveProjectFile={() => {
+          const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `${project.sequence.name.replace(/\s+/g, '_').toLowerCase()}.auteur.json`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 2000);
+        }}
+        onLoadProjectFile={async (file) => {
+          try {
+            const raw = await file.text();
+            const parsed = JSON.parse(raw) as ProjectState;
+            if (parsed && parsed.sequence && Array.isArray(parsed.tracks) && Array.isArray(parsed.clips)) {
+              setIsPlaying(false);
+              setPast([]);
+              setFuture([]);
+              setProject(parsed);
+              setCurrentTime(0);
+              setSelectedClipId(parsed.clips[0]?.id ?? null);
+            }
+          } catch {
+            // Ignore malformed project file
+          }
+        }}
         onOpenExport={() => setIsExportOpen(true)}
       />
 
@@ -821,6 +893,7 @@ export default function App() {
               duration={sequenceDuration}
               isPlaying={isPlaying}
               isLooping={isLooping}
+              isMuted={isMuted}
               playbackRate={playbackRate}
               sourceAsset={sourceAsset}
               selectedClip={selectedClip}
@@ -828,6 +901,7 @@ export default function App() {
               showDualMonitor={showDualMonitor && workspace === 'editing'}
               onToggleDualMonitor={() => setShowDualMonitor((d) => !d)}
               onTogglePlay={() => setIsPlaying((p) => !p)}
+              onToggleMute={() => setIsMuted((m) => !m)}
               onChangePlaybackRate={(rate) => setPlaybackRate(rate)}
               onStepFrame={(delta) => {
                 setIsPlaying(false);
@@ -895,6 +969,12 @@ export default function App() {
                 clips: prev.clips.map((c) =>
                   c.id === clipId ? { ...c, color: structuredClone(copiedGrade) } : c
                 ),
+              }));
+            }}
+            onApplyGradeToAll={(grade) => {
+              commitProject((prev) => ({
+                ...prev,
+                clips: applyColorGradeToAllClips(prev.clips, grade),
               }));
             }}
           />

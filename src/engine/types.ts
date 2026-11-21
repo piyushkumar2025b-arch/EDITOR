@@ -26,7 +26,15 @@ export type TransitionType =
   | 'slide-right'
   | 'zoom-in';
 
-export type MotionPreset = 'none' | 'zoom-in' | 'zoom-out' | 'pan-left' | 'pan-right';
+export type MotionPreset =
+  | 'none'
+  | 'zoom-in'
+  | 'zoom-out'
+  | 'pan-left'
+  | 'pan-right'
+  | 'slide-up'
+  | 'tilt-drift'
+  | 'pulse';
 
 export type PiPLayoutPreset = 'full' | 'pip-tr' | 'pip-tl' | 'split-left' | 'split-right';
 
@@ -39,6 +47,8 @@ export type AudioTonePreset = 'normal' | 'voice' | 'warm-bass' | 'radio';
 export type TextFontFamily = 'sans' | 'serif' | 'mono';
 
 export type TextStylePreset = 'hero' | 'lower-third' | 'caption' | 'tag';
+
+export type TextAnimationPreset = 'none' | 'fade-up' | 'typewriter' | 'pop-in';
 
 export interface CurvePoint {
   x: number; // 0..1
@@ -65,6 +75,8 @@ export interface ColorGrade {
   saturation: number; // -100..100
   vibrance: number; // -100..100
   sharpness: number; // 0..100
+  hueShift?: number; // -180..180 degrees
+  dehaze?: number; // -50..100
   vignette: number; // -100..100 (negative darkens edges, positive brightens)
   grain: number; // 0..100
   lift: ColorWheelOffset;
@@ -84,6 +96,11 @@ export interface ClipEffects {
   vintageFade: number; // 0..100 %
   glow: number; // 0..100 %
   cornerRadius: number; // 0..80 px
+  pixelate?: number; // 0..32 px block size
+  invert?: boolean;
+  borderWidth?: number; // 0..24 px
+  borderColor?: string;
+  dropShadow?: number; // 0..40 px blur
 }
 
 export interface ClipTransform {
@@ -117,6 +134,9 @@ export interface TextOverlay {
   lowerThird: boolean;
   textShadow?: boolean;
   stylePreset?: TextStylePreset;
+  animation?: TextAnimationPreset;
+  outlineWidth?: number;
+  outlineColor?: string;
 }
 
 export interface MediaAsset {

@@ -27,6 +27,7 @@ import {
   MotionPreset,
   PiPLayoutPreset,
   ScopeData,
+  TextAnimationPreset,
   TextFontFamily,
   TextOverlay,
   TextStylePreset,
@@ -48,6 +49,7 @@ interface InspectorPanelProps {
   onFreezeClip?: (clipId: string) => void;
   onCopyGrade: (grade: ColorGrade) => void;
   onPasteGrade: (clipId: string) => void;
+  onApplyGradeToAll?: (grade: ColorGrade) => void;
 }
 
 interface SliderRowProps {
@@ -165,6 +167,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   onFreezeClip,
   onCopyGrade,
   onPasteGrade,
+  onApplyGradeToAll,
 }) => {
   const effectiveTab =
     selectedClip?.kind === 'title' && activeTab === 'color' ? 'text' : activeTab;
@@ -317,16 +320,16 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 
         {selectedClip && effectiveTab === 'color' && (
           <div>
-            {/* Quick Color Action Strip: Auto Fix + Copy/Paste Grade */}
-            <div className="px-3 py-2 border-b border-[#23262E] bg-[#14151A] flex items-center gap-1.5">
+            {/* Quick Color Action Strip: Auto Fix + Copy/Paste/Apply All */}
+            <div className="px-3 py-2 border-b border-[#23262E] bg-[#14151A] flex items-center gap-1">
               <button
                 type="button"
                 onClick={() => onAutoBalanceClip(selectedClip.id)}
                 title="Automatically fix brightness and contrast"
-                className="flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-medium text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded cursor-pointer whitespace-nowrap"
+                className="flex-1 flex items-center justify-center gap-1 py-1.5 text-[11px] font-medium text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded cursor-pointer whitespace-nowrap"
               >
                 <SlidersHorizontal className="w-3 h-3" />
-                <span>Auto Fix Color</span>
+                <span>Auto Fix</span>
               </button>
               <button
                 type="button"
@@ -349,6 +352,17 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 <ClipboardPaste className="w-3 h-3" />
                 <span>Paste</span>
               </button>
+              {onApplyGradeToAll && (
+                <button
+                  type="button"
+                  onClick={() => onApplyGradeToAll(selectedClip.color)}
+                  title="Apply This Color Look to All Video & Photo Clips"
+                  aria-label="Apply Look to All Clips"
+                  className="px-2 py-1.5 text-[11px] font-medium text-[#93C5FD] hover:text-white bg-[#1E2128] border border-[#2C303A] rounded cursor-pointer whitespace-nowrap"
+                >
+                  Apply All
+                </button>
+              )}
             </div>
 
             <CollapsibleSection
@@ -423,6 +437,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   saturation: 0,
                   vibrance: 0,
                   sharpness: 0,
+                  hueShift: 0,
+                  dehaze: 0,
                 })
               }
             >
@@ -506,6 +522,21 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 min={0}
                 max={100}
                 onChange={(v) => updateColor({ sharpness: v })}
+              />
+              <SliderRow
+                label="Dehaze / Depth"
+                value={selectedClip.color.dehaze ?? 0}
+                min={-50}
+                max={100}
+                onChange={(v) => updateColor({ dehaze: v })}
+              />
+              <SliderRow
+                label="Hue Shift"
+                value={selectedClip.color.hueShift ?? 0}
+                min={-180}
+                max={180}
+                unit="°"
+                onChange={(v) => updateColor({ hueShift: v })}
               />
             </CollapsibleSection>
 
@@ -678,6 +709,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   <option value="zoom-out">Slow Zoom Out</option>
                   <option value="pan-left">Pan Left → Right</option>
                   <option value="pan-right">Pan Right → Left</option>
+                  <option value="slide-up">Slide Up Reveal</option>
+                  <option value="tilt-drift">Gentle Tilt Drift</option>
+                  <option value="pulse">Subtle Beat Pulse</option>
                 </select>
               </div>
               <SliderRow
@@ -691,7 +725,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             </CollapsibleSection>
 
             <CollapsibleSection
-              title="Visual Filters & Blur"
+              title="Visual Filters & Frames"
               defaultOpen
               onReset={() => updateEffects({ ...DEFAULT_EFFECTS })}
             >
@@ -729,6 +763,14 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 onChange={(v) => updateEffects({ vintageFade: v })}
               />
               <SliderRow
+                label="Mosaic / Pixelate"
+                value={clipEffects.pixelate ?? 0}
+                min={0}
+                max={32}
+                unit=" px"
+                onChange={(v) => updateEffects({ pixelate: v })}
+              />
+              <SliderRow
                 label="Rounded Corners"
                 value={clipEffects.cornerRadius}
                 min={0}
@@ -736,6 +778,42 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 unit=" px"
                 onChange={(v) => updateEffects({ cornerRadius: v })}
               />
+              <div className="flex items-center gap-2 pt-0.5">
+                <div className="flex-1">
+                  <SliderRow
+                    label="Frame Border"
+                    value={clipEffects.borderWidth ?? 0}
+                    min={0}
+                    max={24}
+                    unit=" px"
+                    onChange={(v) => updateEffects({ borderWidth: v })}
+                  />
+                </div>
+                <input
+                  type="color"
+                  aria-label="Frame Border Color"
+                  value={clipEffects.borderColor ?? '#FFFFFF'}
+                  onChange={(e) => updateEffects({ borderColor: e.target.value })}
+                  className="w-6 h-6 mt-3 bg-transparent border border-[#2B2F3A] rounded cursor-pointer shrink-0"
+                />
+              </div>
+              <SliderRow
+                label="Drop Shadow"
+                value={clipEffects.dropShadow ?? 0}
+                min={0}
+                max={40}
+                unit=" px"
+                onChange={(v) => updateEffects({ dropShadow: v })}
+              />
+              <label className="flex items-center justify-between pt-1 cursor-pointer">
+                <span className="text-[11px] text-[#A8AEB8]">Invert Colors (Negative)</span>
+                <input
+                  type="checkbox"
+                  checked={Boolean(clipEffects.invert)}
+                  onChange={(e) => updateEffects({ invert: e.target.checked })}
+                  className="accent-[#3B82F6] cursor-pointer"
+                />
+              </label>
             </CollapsibleSection>
 
             <CollapsibleSection
@@ -856,6 +934,18 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 defaultValue={0.6}
                 onChange={(v) =>
                   onUpdateClip(selectedClip.id, (c) => ({ ...c, transitionDuration: v }))
+                }
+              />
+              <SliderRow
+                label="Start Point Offset (Slip)"
+                value={selectedClip.sourceIn}
+                min={0}
+                max={30}
+                step={0.25}
+                unit="s"
+                defaultValue={0}
+                onChange={(v) =>
+                  onUpdateClip(selectedClip.id, (c) => ({ ...c, sourceIn: v }))
                 }
               />
             </CollapsibleSection>
@@ -1092,6 +1182,22 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                     />
                   </label>
                 </div>
+                <div className="space-y-1">
+                  <label className="block text-[11px] text-[#A8AEB8]">Text Animation</label>
+                  <select
+                    aria-label="Text Animation"
+                    value={selectedClip.textOverlay.animation ?? 'none'}
+                    onChange={(e) =>
+                      updateText({ animation: e.target.value as TextAnimationPreset })
+                    }
+                    className="w-full bg-[#0E0F12] border border-[#282B33] rounded px-2 py-1 text-[11px] text-white"
+                  >
+                    <option value="none">Static (None)</option>
+                    <option value="fade-up">Slide &amp; Fade Up</option>
+                    <option value="typewriter">Typewriter Reveal</option>
+                    <option value="pop-in">Smooth Pop In</option>
+                  </select>
+                </div>
                 <SliderRow
                   label="Text Size"
                   value={selectedClip.textOverlay.fontSize}
@@ -1101,6 +1207,36 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   defaultValue={36}
                   onChange={(v) => updateText({ fontSize: v })}
                 />
+                <SliderRow
+                  label="Letter Spacing"
+                  value={selectedClip.textOverlay.letterSpacing}
+                  min={-0.05}
+                  max={0.35}
+                  step={0.01}
+                  unit=" em"
+                  defaultValue={0}
+                  onChange={(v) => updateText({ letterSpacing: v })}
+                />
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <SliderRow
+                      label="Text Outline"
+                      value={selectedClip.textOverlay.outlineWidth ?? 0}
+                      min={0}
+                      max={8}
+                      step={0.5}
+                      unit=" px"
+                      onChange={(v) => updateText({ outlineWidth: v })}
+                    />
+                  </div>
+                  <input
+                    type="color"
+                    aria-label="Outline Color"
+                    value={selectedClip.textOverlay.outlineColor ?? '#000000'}
+                    onChange={(e) => updateText({ outlineColor: e.target.value })}
+                    className="w-6 h-6 mt-3 bg-transparent border border-[#2B2F3A] rounded cursor-pointer shrink-0"
+                  />
+                </div>
                 <SliderRow
                   label="Box Opacity"
                   value={selectedClip.textOverlay.backgroundOpacity}

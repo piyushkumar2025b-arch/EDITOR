@@ -104,21 +104,41 @@ export const PhotoStudio: React.FC<PhotoStudioProps> = ({
 
     const rw = Math.max(2, Math.round(drawW));
     const rh = Math.max(2, Math.round(drawH));
+    const pixBlock = activeClip.effects?.pixelate ?? 0;
 
     // Grade only the photo pixels (not the #0B0C0E background matte)
     let gradedPhotoSource: CanvasImageSource = img;
     const needsGrade =
-      !isColorGradeIdentity(activeClip.color) || !isEffectsIdentity(activeClip.effects);
+      !isColorGradeIdentity(activeClip.color) ||
+      !isEffectsIdentity(activeClip.effects) ||
+      pixBlock > 1;
     if (needsGrade) {
       const tmp = document.createElement('canvas');
       tmp.width = rw;
       tmp.height = rh;
       const tCtx = tmp.getContext('2d', { willReadFrequently: true });
       if (tCtx) {
-        const blurPx = activeClip.effects?.blur ?? 0;
-        if (blurPx > 0) tCtx.filter = `blur(${blurPx}px)`;
-        tCtx.drawImage(img, 0, 0, rw, rh);
-        tCtx.filter = 'none';
+        if (pixBlock > 1) {
+          const pw = Math.max(4, Math.round(rw / pixBlock));
+          const ph = Math.max(4, Math.round(rh / pixBlock));
+          const mini = document.createElement('canvas');
+          mini.width = pw;
+          mini.height = ph;
+          const mCtx = mini.getContext('2d');
+          if (mCtx) {
+            mCtx.drawImage(img, 0, 0, pw, ph);
+            tCtx.imageSmoothingEnabled = false;
+            tCtx.drawImage(mini, 0, 0, rw, rh);
+            tCtx.imageSmoothingEnabled = true;
+          } else {
+            tCtx.drawImage(img, 0, 0, rw, rh);
+          }
+        } else {
+          const blurPx = activeClip.effects?.blur ?? 0;
+          if (blurPx > 0) tCtx.filter = `blur(${blurPx}px)`;
+          tCtx.drawImage(img, 0, 0, rw, rh);
+          tCtx.filter = 'none';
+        }
         const imgData = tCtx.getImageData(0, 0, rw, rh);
         applyColorGradeToImageData(imgData.data, activeClip.color, activeClip.effects);
         tCtx.putImageData(imgData, 0, 0);
@@ -138,7 +158,8 @@ export const PhotoStudio: React.FC<PhotoStudioProps> = ({
 
     const drawTransformed = (
       targetCtx: CanvasRenderingContext2D,
-      src: CanvasImageSource
+      src: CanvasImageSource,
+      withFrameEffects: boolean
     ) => {
       targetCtx.fillStyle = '#0B0C0E';
       targetCtx.fillRect(0, 0, w, h);
@@ -153,20 +174,38 @@ export const PhotoStudio: React.FC<PhotoStudioProps> = ({
       const cBottom = (activeClip.transform.cropBottom / 100) * drawH;
       const cLeft = (activeClip.transform.cropLeft / 100) * drawW;
       const cRight = (activeClip.transform.cropRight / 100) * drawW;
+      const rx = -drawW / 2 + cLeft;
+      const ry = -drawH / 2 + cTop;
+      const rWidth = Math.max(1, drawW - cLeft - cRight);
+      const rHeight = Math.max(1, drawH - cTop - cBottom);
+
+      if (withFrameEffects && (activeClip.effects?.dropShadow ?? 0) > 0.5) {
+        targetCtx.save();
+        targetCtx.shadowColor = 'rgba(0,0,0,0.75)';
+        targetCtx.shadowBlur = activeClip.effects?.dropShadow ?? 0;
+        targetCtx.fillStyle = '#000000';
+        targetCtx.fillRect(rx, ry, rWidth, rHeight);
+        targetCtx.restore();
+      }
+
+      targetCtx.save();
       targetCtx.beginPath();
-      targetCtx.rect(
-        -drawW / 2 + cLeft,
-        -drawH / 2 + cTop,
-        Math.max(1, drawW - cLeft - cRight),
-        Math.max(1, drawH - cTop - cBottom)
-      );
+      targetCtx.rect(rx, ry, rWidth, rHeight);
       targetCtx.clip();
       targetCtx.drawImage(src, -drawW / 2, -drawH / 2, drawW, drawH);
       targetCtx.restore();
+
+      const bw = withFrameEffects ? activeClip.effects?.borderWidth ?? 0 : 0;
+      if (bw > 0.25) {
+        targetCtx.strokeStyle = activeClip.effects?.borderColor ?? '#FFFFFF';
+        targetCtx.lineWidth = bw;
+        targetCtx.strokeRect(rx, ry, rWidth, rHeight);
+      }
+      targetCtx.restore();
     };
 
-    drawTransformed(uCtx, img);
-    drawTransformed(gCtx, gradedPhotoSource);
+    drawTransformed(uCtx, img, false);
+    drawTransformed(gCtx, gradedPhotoSource, true);
 
     // Draw instant composite after updating buffers
     drawComposite(compareSplit);

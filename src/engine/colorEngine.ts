@@ -28,6 +28,11 @@ export const DEFAULT_EFFECTS: ClipEffects = {
   vintageFade: 0,
   glow: 0,
   cornerRadius: 0,
+  pixelate: 0,
+  invert: false,
+  borderWidth: 0,
+  borderColor: '#FFFFFF',
+  dropShadow: 0,
 };
 
 export const DEFAULT_CURVE: CurvePoint[] = [
@@ -51,6 +56,8 @@ export function createDefaultColorGrade(): ColorGrade {
     saturation: 0,
     vibrance: 0,
     sharpness: 0,
+    hueShift: 0,
+    dehaze: 0,
     vignette: 0,
     grain: 0,
     lift: { x: 0, y: 0, luma: 0 },
@@ -237,6 +244,35 @@ export const PHOTO_STYLE_PRESETS: PhotoStylePreset[] = [
     }),
     effects: { sepia: 32, vintageFade: 28, glow: 10 },
   },
+  {
+    id: 'teal-cinema',
+    label: 'Teal Cinema',
+    buildGrade: () => ({
+      ...createDefaultColorGrade(),
+      lut: 'teal-orange',
+      lutIntensity: 85,
+      contrast: 14,
+      dehaze: 18,
+      vibrance: 16,
+      vignette: -20,
+    }),
+    effects: { glow: 6, sepia: 0, vintageFade: 0 },
+  },
+  {
+    id: 'matte-pastel',
+    label: 'Matte Pastel',
+    buildGrade: () => ({
+      ...createDefaultColorGrade(),
+      lut: 'fuji-eterna',
+      lutIntensity: 80,
+      exposure: 0.12,
+      contrast: -8,
+      highlights: -18,
+      shadows: 24,
+      saturation: -12,
+    }),
+    effects: { vintageFade: 34, glow: 14, sepia: 0 },
+  },
 ];
 
 export function buildToneCurveLUT(points: CurvePoint[]): Uint8ClampedArray {
@@ -300,7 +336,11 @@ export function isEffectsIdentity(effects?: ClipEffects): boolean {
     effects.sepia === 0 &&
     effects.vintageFade === 0 &&
     effects.glow === 0 &&
-    effects.cornerRadius === 0
+    effects.cornerRadius === 0 &&
+    (effects.pixelate ?? 0) === 0 &&
+    !effects.invert &&
+    (effects.borderWidth ?? 0) === 0 &&
+    (effects.dropShadow ?? 0) === 0
   );
 }
 
@@ -318,6 +358,8 @@ export function isColorGradeIdentity(grade: ColorGrade): boolean {
     grade.saturation !== 0 ||
     grade.vibrance !== 0 ||
     grade.sharpness !== 0 ||
+    (grade.hueShift ?? 0) !== 0 ||
+    (grade.dehaze ?? 0) !== 0 ||
     grade.lift.x !== 0 ||
     grade.lift.y !== 0 ||
     grade.lift.luma !== 0 ||
@@ -372,7 +414,8 @@ export function applyColorGradeToImageData(
   const gradeId = isColorGradeIdentity(grade);
   const sepiaAmt = effects ? effects.sepia / 100 : 0;
   const fadeAmt = effects ? effects.vintageFade / 100 : 0;
-  if (gradeId && sepiaAmt === 0 && fadeAmt === 0) return;
+  const invertFlag = Boolean(effects?.invert);
+  if (gradeId && sepiaAmt === 0 && fadeAmt === 0 && !invertFlag) return;
 
   const lutDef = LUT_PRESETS.find((l) => l.id === grade.lut) ?? LUT_PRESETS[0];
   const lutMix = grade.lut === 'none' ? 0 : grade.lutIntensity / 100;
@@ -382,16 +425,37 @@ export function applyColorGradeToImageData(
   const greenCurve = buildToneCurveLUT(grade.curves.green);
   const blueCurve = buildToneCurveLUT(grade.curves.blue);
 
+  const dehazeAmt = (grade.dehaze ?? 0) / 100;
   const expMult = Math.pow(2, grade.exposure);
-  const contrastFactor = 1 + grade.contrast / 100 + (grade.sharpness || 0) / 420;
+  const contrastFactor =
+    1 + grade.contrast / 100 + (grade.sharpness || 0) / 420 + dehazeAmt * 0.35;
   const tempOffset = grade.temperature / 280;
   const tintOffset = grade.tint / 320;
   const highlightsAdj = grade.highlights / 220;
   const shadowsAdj = grade.shadows / 220;
   const whitesAdj = grade.whites / 300;
-  const blacksAdj = grade.blacks / 300;
-  const satMult = 1 + grade.saturation / 100;
+  const blacksAdj = grade.blacks / 300 - dehazeAmt * 0.08;
+  const satMult = 1 + grade.saturation / 100 + dehazeAmt * 0.18;
   const vibAmt = grade.vibrance / 100;
+
+  const hueDeg = grade.hueShift ?? 0;
+  const hasHueShift = Math.abs(hueDeg) > 0.5;
+  let h00 = 1, h01 = 0, h02 = 0, h10 = 0, h11 = 1, h12 = 0, h20 = 0, h21 = 0, h22 = 1;
+  if (hasHueShift) {
+    const rad = (hueDeg * Math.PI) / 180;
+    const cosA = Math.cos(rad);
+    const sinA = Math.sin(rad);
+    const sq3 = Math.sqrt(1 / 3);
+    h00 = cosA + (1 - cosA) / 3;
+    h01 = (1 - cosA) / 3 - sq3 * sinA;
+    h02 = (1 - cosA) / 3 + sq3 * sinA;
+    h10 = (1 - cosA) / 3 + sq3 * sinA;
+    h11 = cosA + (1 - cosA) / 3;
+    h12 = (1 - cosA) / 3 - sq3 * sinA;
+    h20 = (1 - cosA) / 3 - sq3 * sinA;
+    h21 = (1 - cosA) / 3 + sq3 * sinA;
+    h22 = cosA + (1 - cosA) / 3;
+  }
 
   const liftR = grade.lift.luma * 0.25 + grade.lift.x * 0.22;
   const liftG = grade.lift.luma * 0.25 - grade.lift.x * 0.1 - grade.lift.y * 0.14;
@@ -526,12 +590,27 @@ export function applyColorGradeToImageData(
       b = b * invS + sb * sepiaAmt;
     }
 
+    if (hasHueShift) {
+      const hr = r * h00 + g * h01 + b * h02;
+      const hg = r * h10 + g * h11 + b * h12;
+      const hb = r * h20 + g * h21 + b * h22;
+      r = hr;
+      g = hg;
+      b = hb;
+    }
+
     if (fadeAmt > 0) {
       const lift = fadeAmt * 0.14;
       const compress = 1 - fadeAmt * 0.18;
       r = r * compress + lift;
       g = g * compress + lift;
       b = b * compress + lift * 1.08;
+    }
+
+    if (invertFlag) {
+      r = 1 - r;
+      g = 1 - g;
+      b = 1 - b;
     }
 
     const rr = r * 255 + 0.5;

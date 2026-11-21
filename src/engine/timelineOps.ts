@@ -397,3 +397,23 @@ export function getSequenceDimensionsForRatio(ratio: SequenceAspectPreset): {
       return { width: 1920, height: 1080 };
   }
 }
+
+export function applyColorGradeToAllClips(
+  clips: TimelineClip[],
+  grade: TimelineClip['color']
+): TimelineClip[] {
+  return clips.map((c) =>
+    c.kind === 'image' || c.kind === 'video'
+      ? { ...c, color: structuredClone(grade) }
+      : c
+  );
+}
+
+export function slipClipSource(
+  clips: TimelineClip[],
+  clipId: string,
+  nextSourceIn: number
+): TimelineClip[] {
+  const clamped = Math.max(0, Number(nextSourceIn.toFixed(3)));
+  return clips.map((c) => (c.id === clipId ? { ...c, sourceIn: clamped } : c));
+}

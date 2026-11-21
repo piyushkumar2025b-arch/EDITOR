@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   Download,
+  FolderOpen,
   Grid,
   HelpCircle,
   Redo2,
   RotateCcw,
+  Save,
   Scan,
   Undo2,
   X,
@@ -24,6 +26,8 @@ interface TopBarProps {
   showGrid: boolean;
   onToggleGrid: () => void;
   onResetProject: () => void;
+  onSaveProjectFile?: () => void;
+  onLoadProjectFile?: (file: File) => void;
   onOpenExport: () => void;
 }
 
@@ -60,9 +64,12 @@ export const TopBar: React.FC<TopBarProps> = ({
   showGrid,
   onToggleGrid,
   onResetProject,
+  onSaveProjectFile,
+  onLoadProjectFile,
   onOpenExport,
 }) => {
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const projectFileRef = useRef<HTMLInputElement>(null);
 
   return (
     <header className="h-11 shrink-0 bg-[#141518] border-b border-[#262930] px-4 flex items-center justify-between gap-6 select-none relative z-40">
@@ -218,19 +225,64 @@ export const TopBar: React.FC<TopBarProps> = ({
               </div>
             ))}
           </div>
-          <div className="mt-3 pt-2.5 border-t border-[#252830] flex items-center justify-between">
-            <span className="text-[11px] text-[#8E939E]">Start fresh</span>
-            <button
-              type="button"
-              onClick={() => {
-                onResetProject();
-                setShowShortcuts(false);
-              }}
-              className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-[#FCA5A5] hover:text-white bg-[#1F222A] hover:bg-[#DC2626]/25 border border-[#2C303A] rounded cursor-pointer"
-            >
-              <RotateCcw className="w-3 h-3" />
-              <span>Reset Project</span>
-            </button>
+          <div className="mt-3 pt-2.5 border-t border-[#252830] space-y-2">
+            {(onSaveProjectFile || onLoadProjectFile) && (
+              <div className="flex items-center gap-1.5">
+                {onSaveProjectFile && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSaveProjectFile();
+                      setShowShortcuts(false);
+                    }}
+                    className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-[11px] font-medium text-[#E5E7EB] bg-[#1F222A] hover:bg-[#2A2F3B] border border-[#2C303A] rounded cursor-pointer"
+                  >
+                    <Save className="w-3 h-3" />
+                    <span>Save Project</span>
+                  </button>
+                )}
+                {onLoadProjectFile && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => projectFileRef.current?.click()}
+                      className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-[11px] font-medium text-[#E5E7EB] bg-[#1F222A] hover:bg-[#2A2F3B] border border-[#2C303A] rounded cursor-pointer"
+                    >
+                      <FolderOpen className="w-3 h-3" />
+                      <span>Open Project</span>
+                    </button>
+                    <input
+                      ref={projectFileRef}
+                      type="file"
+                      accept=".json,application/json"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) {
+                          onLoadProjectFile(f);
+                          setShowShortcuts(false);
+                          e.target.value = '';
+                        }
+                      }}
+                    />
+                  </>
+                )}
+              </div>
+            )}
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-[#8E939E]">Start fresh</span>
+              <button
+                type="button"
+                onClick={() => {
+                  onResetProject();
+                  setShowShortcuts(false);
+                }}
+                className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-[#FCA5A5] hover:text-white bg-[#1F222A] hover:bg-[#DC2626]/25 border border-[#2C303A] rounded cursor-pointer"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Reset Project</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

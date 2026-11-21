@@ -41,6 +41,8 @@ export const DEFAULT_EFFECTS: ClipEffects = {
   tiltShift: 0,
   mirrorMode: 'none',
   maskShape: 'rect',
+  maskFeather: 0,
+  maskInvert: false,
   chromaKey: {
     enabled: false,
     color: '#00b140',
@@ -72,6 +74,10 @@ export function createDefaultColorGrade(): ColorGrade {
     sharpness: 0,
     hueShift: 0,
     dehaze: 0,
+    splitShadowHue: 210,
+    splitShadowSat: 0,
+    splitHighlightHue: 38,
+    splitHighlightSat: 0,
     vignette: 0,
     grain: 0,
     lift: { x: 0, y: 0, luma: 0 },
@@ -482,6 +488,8 @@ export function isEffectsIdentity(effects?: ClipEffects): boolean {
     (effects.tiltShift ?? 0) === 0 &&
     (!effects.mirrorMode || effects.mirrorMode === 'none') &&
     (!effects.maskShape || effects.maskShape === 'rect') &&
+    (effects.maskFeather ?? 0) === 0 &&
+    !effects.maskInvert &&
     !effects.chromaKey?.enabled
   );
 }
@@ -502,6 +510,8 @@ export function isColorGradeIdentity(grade: ColorGrade): boolean {
     grade.sharpness !== 0 ||
     (grade.hueShift ?? 0) !== 0 ||
     (grade.dehaze ?? 0) !== 0 ||
+    (grade.splitShadowSat ?? 0) !== 0 ||
+    (grade.splitHighlightSat ?? 0) !== 0 ||
     grade.lift.x !== 0 ||
     grade.lift.y !== 0 ||
     grade.lift.luma !== 0 ||
@@ -650,6 +660,19 @@ export function applyColorGradeToImageData(
   const hasWB = tempOffset !== 0 || tintOffset !== 0;
   const hasBlackWhite = blacksAdj !== 0 || whitesAdj !== 0;
 
+  const shSat = Math.max(0, Math.min(1, (grade.splitShadowSat ?? 0) / 100));
+  const hiSat = Math.max(0, Math.min(1, (grade.splitHighlightSat ?? 0) / 100));
+  const hasSplitTone = shSat > 0.005 || hiSat > 0.005;
+  const hueToUnitRgb = (deg: number): [number, number, number] => {
+    const rad = ((deg % 360) * Math.PI) / 180;
+    const tr = 0.5 + 0.5 * Math.cos(rad);
+    const tg = 0.5 + 0.5 * Math.cos(rad - (2 * Math.PI) / 3);
+    const tb = 0.5 + 0.5 * Math.cos(rad - (4 * Math.PI) / 3);
+    return [tr - 0.5, tg - 0.5, tb - 0.5];
+  };
+  const [shR, shG, shB] = hueToUnitRgb(grade.splitShadowHue ?? 210);
+  const [hiR, hiG, hiB] = hueToUnitRgb(grade.splitHighlightHue ?? 38);
+
   const len = data.length;
   for (let i = 0; i < len; i += 4) {
     if (data[i + 3] === 0) continue;
@@ -735,6 +758,15 @@ export function applyColorGradeToImageData(
       r = r * inv + lr * lutMix;
       g = g * inv + lg * lutMix;
       b = b * inv + lb * lutMix;
+    }
+
+    if (hasSplitTone) {
+      const luma = Math.max(0, Math.min(1, 0.2126 * r + 0.7152 * g + 0.0722 * b));
+      const sw = (1 - luma) * (1 - luma) * shSat * 0.42;
+      const hw = luma * luma * hiSat * 0.42;
+      r += shR * sw + hiR * hw;
+      g += shG * sw + hiG * hw;
+      b += shB * sw + hiB * hw;
     }
 
     // Visual filters: Sepia & Vintage Fade

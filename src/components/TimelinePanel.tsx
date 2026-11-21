@@ -19,16 +19,18 @@ import {
   Repeat2,
   Scissors,
   Sparkles,
+  SplitSquareHorizontal,
   Trash2,
   Type,
   Unlock,
   Volume2,
   VolumeX,
+  X,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
 import { generateRulerTicks, secondsToTimecode, snapTime } from '../engine/timecode';
-import { getClipSnapPoints } from '../engine/timelineOps';
+import { findAdjacentClipPairAtPoint, getClipSnapPoints } from '../engine/timelineOps';
 import {
   MediaAsset,
   SequenceSettings,
@@ -57,9 +59,11 @@ interface TimelinePanelProps {
   onMoveClip: (clipId: string, newStartTime: number, newTrackId: string) => void;
   onMoveClipsForward?: (clipId: string, deltaSeconds: number, allTracks: boolean) => void;
   onTrimClip: (clipId: string, edge: 'left' | 'right', newTime: number) => void;
+  onRollEditCut?: (leftClipId: string, rightClipId: string, newCutTime: number) => void;
   onRateStretchClip?: (clipId: string, edge: 'left' | 'right', newTime: number) => void;
   onSlipClip?: (clipId: string, nextSourceIn: number) => void;
   onTrimClipToPlayhead: (clipId: string, edge: 'left' | 'right') => void;
+  onRippleTrimToPlayhead?: (clipId: string, edge: 'left' | 'right') => void;
   onSplitClip: (clipId: string, splitTime: number) => void;
   onSplitAllAtPlayhead: () => void;
   onDeleteClip: (clipId: string, ripple: boolean) => void;
@@ -69,6 +73,8 @@ interface TimelinePanelProps {
   onExtractRange?: () => void;
   onDuplicateClip: (clipId: string) => void;
   onAddMarker: () => void;
+  onUpdateMarker?: (markerId: string, patch: Partial<TimelineMarker>) => void;
+  onDeleteMarker?: (markerId: string) => void;
   onAddTextAtPlayhead: () => void;
   onToggleTrackProp: (trackId: string, prop: 'muted' | 'solo' | 'locked' | 'visible') => void;
   onAddTrack: (type: 'video' | 'audio') => void;
@@ -97,9 +103,11 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
   onMoveClip,
   onMoveClipsForward,
   onTrimClip,
+  onRollEditCut,
   onRateStretchClip,
   onSlipClip,
   onTrimClipToPlayhead,
+  onRippleTrimToPlayhead,
   onSplitClip,
   onSplitAllAtPlayhead,
   onDeleteClip,
@@ -109,6 +117,8 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
   onExtractRange,
   onDuplicateClip,
   onAddMarker,
+  onUpdateMarker,
+  onDeleteMarker,
   onAddTextAtPlayhead,
   onToggleTrackProp,
   onAddTrack,
@@ -116,18 +126,23 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
   onApplyQuickDissolve,
 }) => {
   const [pixelsPerSecond, setPixelsPerSecond] = useState(52);
+  const [showMarkersList, setShowMarkersList] = useState(false);
   const [dragState, setDragState] = useState<{
     mode:
       | 'move'
       | 'move-forward'
       | 'trim-left'
       | 'trim-right'
+      | 'roll'
       | 'stretch-left'
       | 'stretch-right'
       | 'slip'
       | 'scrub'
       | 'pan';
     clipId?: string;
+    rollLeftId?: string;
+    rollRightId?: string;
+    origCutTime?: number;
     startClientX: number;
     lastAppliedDelta?: number;
     allTracks?: boolean;
@@ -180,6 +195,16 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
     if (dragState.mode === 'pan' && lanesRef.current) {
       const dx = e.clientX - dragState.startClientX;
       lanesRef.current.scrollLeft = Math.max(0, (dragState.origScrollLeft ?? 0) - dx);
+      return;
+    }
+
+    if (dragState.mode === 'roll' && dragState.rollLeftId && dragState.rollRightId && onRollEditCut) {
+      const deltaSec = (e.clientX - dragState.startClientX) / pixelsPerSecond;
+      const snapPoints = getClipSnapPoints(clips, currentTime);
+      const snapThreshold = 10 / pixelsPerSecond;
+      const rawCut = Math.max(0.25, (dragState.origCutTime ?? 0) + deltaSec);
+      const snappedCut = snapTime(rawCut, snapPoints, snapThreshold, snapEnabled);
+      onRollEditCut(dragState.rollLeftId, dragState.rollRightId, snappedCut);
       return;
     }
 
@@ -246,6 +271,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
     { id: 'track-select', label: 'Track Select Forward Tool', shortLabel: 'Ahead', shortcut: 'A', icon: <ArrowRight className="w-3.5 h-3.5" /> },
     { id: 'razor', label: 'Cut Clip Tool', shortLabel: 'Cut', shortcut: 'C', icon: <Scissors className="w-3.5 h-3.5" /> },
     { id: 'trim', label: 'Trim Edges Tool', shortLabel: 'Trim', shortcut: 'B', icon: <MoveHorizontal className="w-3.5 h-3.5" /> },
+    { id: 'roll', label: 'Roll Edit Adjacent Cut Tool', shortLabel: 'Roll', shortcut: 'N', icon: <SplitSquareHorizontal className="w-3.5 h-3.5" /> },
     { id: 'rate-stretch', label: 'Rate Stretch Speed Tool', shortLabel: 'Speed', shortcut: 'R', icon: <Gauge className="w-3.5 h-3.5" /> },
     { id: 'slip', label: 'Slip Source Offset Tool', shortLabel: 'Slip', shortcut: 'Y', icon: <Repeat2 className="w-3.5 h-3.5" /> },
     { id: 'text', label: 'Add Text Overlay', shortLabel: 'Text', shortcut: 'T', icon: <Type className="w-3.5 h-3.5" /> },
@@ -257,6 +283,8 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
       ? 'Cut Mode (C): Click any clip to split it'
       : activeTool === 'track-select'
       ? 'Select Ahead (A): Drag any clip to slide it + all later clips on track (Hold Shift for all tracks)'
+      : activeTool === 'roll'
+      ? 'Roll Cut (N): Drag near any cut between two touching clips to adjust both edges together'
       : activeTool === 'rate-stretch'
       ? 'Rate Stretch (R): Drag clip edges to speed up or slow down playback'
       : activeTool === 'slip'
@@ -322,6 +350,21 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
 
           <button
             type="button"
+            onClick={() => setShowMarkersList((v) => !v)}
+            aria-expanded={showMarkersList}
+            aria-label="Manage Bookmarks"
+            title="View, Rename & Jump Between Bookmarks"
+            className={`px-1.5 py-1 text-[11px] font-mono-tabular rounded border cursor-pointer whitespace-nowrap ${
+              showMarkersList
+                ? 'bg-[#252B36] border-[#3B82F6] text-white'
+                : 'bg-[#1D1F26] border-[#292D36] text-[#9CA3AF] hover:text-white'
+            }`}
+          >
+            {markers.length}
+          </button>
+
+          <button
+            type="button"
             onClick={onSplitAllAtPlayhead}
             title="Cut All Tracks at Playhead (Ctrl+Shift+K)"
             aria-label="Cut All Tracks"
@@ -368,18 +411,26 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
               </button>
               <button
                 type="button"
-                onClick={() => onTrimClipToPlayhead(selectedClip.id, 'left')}
-                title="Trim Clip Start to Playhead"
-                aria-label="Trim Start to Playhead"
+                onClick={() =>
+                  onRippleTrimToPlayhead
+                    ? onRippleTrimToPlayhead(selectedClip.id, 'left')
+                    : onTrimClipToPlayhead(selectedClip.id, 'left')
+                }
+                title="Ripple Trim Start to Playhead (Q) — Closes Gap"
+                aria-label="Ripple Trim Start to Playhead"
                 className="p-1.5 text-[#C7CBD4] hover:text-white bg-[#1D1F26] border border-[#292D36] rounded cursor-pointer"
               >
                 <ArrowRightToLine className="w-3 h-3" />
               </button>
               <button
                 type="button"
-                onClick={() => onTrimClipToPlayhead(selectedClip.id, 'right')}
-                title="Trim Clip End to Playhead"
-                aria-label="Trim End to Playhead"
+                onClick={() =>
+                  onRippleTrimToPlayhead
+                    ? onRippleTrimToPlayhead(selectedClip.id, 'right')
+                    : onTrimClipToPlayhead(selectedClip.id, 'right')
+                }
+                title="Ripple Trim End to Playhead (W) — Closes Gap"
+                aria-label="Ripple Trim End to Playhead"
                 className="p-1.5 text-[#C7CBD4] hover:text-white bg-[#1D1F26] border border-[#292D36] rounded cursor-pointer"
               >
                 <ArrowLeftToLine className="w-3 h-3" />
@@ -493,7 +544,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
         {/* 1. Left Tool Strip */}
         <div
           aria-label="Timeline Tools"
-          className="w-12 shrink-0 bg-[#16171C] border-r border-[#24272E] py-1 flex flex-col items-center gap-0.5 overflow-y-auto"
+          className="w-[84px] shrink-0 bg-[#16171C] border-r border-[#24272E] p-1 grid grid-cols-2 gap-1 content-start"
         >
           {tools.map((t) => {
             const active = activeTool === t.id;
@@ -511,7 +562,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
                 aria-pressed={active}
                 aria-label={`${t.label} (${t.shortcut})`}
                 title={`${t.label} (${t.shortcut})`}
-                className={`w-10 py-0.5 flex flex-col items-center justify-center gap-0.5 rounded transition-colors cursor-pointer ${
+                className={`py-1 flex flex-col items-center justify-center gap-0.5 rounded cursor-pointer ${
                   active
                     ? 'bg-[#3B82F6] text-white'
                     : 'text-[#9CA3AF] hover:text-white hover:bg-[#23262F]'
@@ -694,19 +745,29 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
                 </div>
               ))}
 
-              {markers.map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onSeek(m.time);
-                  }}
-                  title={`${m.label} (${secondsToTimecode(m.time, sequence.fps)})`}
-                  style={{ left: m.time * pixelsPerSecond }}
-                  className="absolute bottom-0 -translate-x-1/2 w-2.5 h-2.5 bg-[#10B981] hover:bg-[#34D399] rounded-t-xs cursor-pointer"
-                />
-              ))}
+              {markers.map((m) => {
+                const markerColor =
+                  m.color === 'amber'
+                    ? 'bg-[#F59E0B] hover:bg-[#FBBF24]'
+                    : m.color === 'blue'
+                    ? 'bg-[#3B82F6] hover:bg-[#60A5FA]'
+                    : m.color === 'rose'
+                    ? 'bg-[#F43F5E] hover:bg-[#FB7185]'
+                    : 'bg-[#10B981] hover:bg-[#34D399]';
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSeek(m.time);
+                    }}
+                    title={`${m.label} (${secondsToTimecode(m.time, sequence.fps)})`}
+                    style={{ left: m.time * pixelsPerSecond }}
+                    className={`absolute bottom-0 -translate-x-1/2 w-2.5 h-2.5 rounded-t-xs cursor-pointer ${markerColor}`}
+                  />
+                );
+              })}
             </div>
 
             {/* Track Lanes & Clips */}
@@ -745,12 +806,22 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
                       const widthPx = Math.max(16, clip.duration * pixelsPerSecond);
                       const selected = clip.id === selectedClipId;
                       const asset = assetMap.get(clip.assetId);
-                      const hasTransition =
-                        (clip.transitionIn && clip.transitionIn !== 'none') ||
-                        (clip.transitionOut && clip.transitionOut !== 'none');
+                      const hasTransitionIn = Boolean(clip.transitionIn && clip.transitionIn !== 'none');
+                      const hasTransitionOut = Boolean(clip.transitionOut && clip.transitionOut !== 'none');
+                      const hasTransition = hasTransitionIn || hasTransitionOut;
+
+                      const customPalette: Record<string, string> = {
+                        cerulean: 'bg-[#1A3B63] border-[#3B82F6] text-[#E0F2FE]',
+                        violet: 'bg-[#38235C] border-[#8B5CF6] text-[#EDE9FE]',
+                        emerald: 'bg-[#134234] border-[#10B981] text-[#D1FAE5]',
+                        amber: 'bg-[#452D14] border-[#F59E0B] text-[#FEF3C7]',
+                        rose: 'bg-[#4C1D2F] border-[#F43F5E] text-[#FFE4E6]',
+                      };
 
                       const paletteClass =
-                        clip.kind === 'audio'
+                        clip.labelColor && clip.labelColor !== 'default' && customPalette[clip.labelColor]
+                          ? customPalette[clip.labelColor]
+                          : clip.kind === 'audio'
                           ? 'bg-[#13382E] border-[#1E5B49] text-[#D1FAE5]'
                           : clip.kind === 'title'
                           ? 'bg-[#312548] border-[#523C7A] text-[#EDE9FE]'
@@ -783,6 +854,28 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
                             }
                             onSelectClip(clip.id);
                             if (tr.locked) return;
+                            if (activeTool === 'roll' && onRollEditCut) {
+                              const clickTime = clientXToTime(e.clientX);
+                              const pair = findAdjacentClipPairAtPoint(
+                                clips,
+                                tr.id,
+                                clickTime,
+                                Math.max(0.4, 18 / pixelsPerSecond)
+                              );
+                              if (pair) {
+                                setDragState({
+                                  mode: 'roll',
+                                  rollLeftId: pair.leftClipId,
+                                  rollRightId: pair.rightClipId,
+                                  origCutTime: pair.cutTime,
+                                  startClientX: e.clientX,
+                                  origStartTime: clip.startTime,
+                                  origDuration: clip.duration,
+                                  origTrackId: clip.trackId,
+                                });
+                                return;
+                              }
+                            }
                             if (activeTool === 'track-select') {
                               setDragState({
                                 mode: 'move-forward',
@@ -822,11 +915,23 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
                           } ${selected ? 'ring-1.5 ring-[#F59E0B] border-[#F59E0B] z-10' : ''} ${
                             activeTool === 'razor'
                               ? 'cursor-crosshair'
-                              : activeTool === 'slip'
+                              : activeTool === 'slip' || activeTool === 'roll'
                               ? 'cursor-ew-resize'
                               : 'cursor-grab active:cursor-grabbing'
                           }`}
                         >
+                          {hasTransitionIn && (
+                            <span
+                              title={`Transition In: ${clip.transitionIn}`}
+                              className="absolute left-0 top-0 bottom-0 w-2 bg-gradient-to-r from-[#F59E0B]/45 to-transparent pointer-events-none"
+                            />
+                          )}
+                          {hasTransitionOut && (
+                            <span
+                              title={`Transition Out: ${clip.transitionOut}`}
+                              className="absolute right-0 top-0 bottom-0 w-2 bg-gradient-to-l from-[#F59E0B]/45 to-transparent pointer-events-none"
+                            />
+                          )}
                           <div className="px-1.5 pt-0.5 flex items-center justify-between gap-1 text-[10px] font-medium leading-none truncate pointer-events-none">
                             <span className="truncate">
                               {clip.disabled ? '[Off] ' : hasTransition ? '◆ ' : ''}
@@ -975,6 +1080,88 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
           </span>
         </aside>
       </div>
+
+      {/* Markers Manager Popover */}
+      {showMarkersList && (
+        <div
+          role="dialog"
+          aria-label="Timeline Bookmarks Manager"
+          className="fixed bottom-[300px] left-1/2 -translate-x-1/2 w-[380px] max-w-[92vw] bg-[#181A20] border border-[#2D313B] rounded-md shadow-2xl p-3 z-50 space-y-2.5"
+        >
+          <div className="flex items-center justify-between border-b border-[#252830] pb-2">
+            <span className="text-[12px] font-semibold text-white">Timeline Bookmarks</span>
+            <button
+              type="button"
+              onClick={() => setShowMarkersList(false)}
+              aria-label="Close Bookmarks Manager"
+              className="p-1 text-[#8E939E] hover:text-white cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          {markers.length === 0 ? (
+            <div className="text-[11px] text-[#8E939E] py-3 text-center">
+              No bookmarks yet. Press M or click Bookmark to add one at the playhead.
+            </div>
+          ) : (
+            <div className="max-h-52 overflow-y-auto space-y-1.5">
+              {[...markers]
+                .sort((a, b) => a.time - b.time)
+                .map((m) => (
+                  <div
+                    key={m.id}
+                    className="flex items-center gap-1.5 bg-[#111216] border border-[#262930] rounded px-2 py-1"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => onSeek(m.time)}
+                      className="text-[10px] font-mono-tabular text-[#60A5FA] hover:text-white shrink-0 cursor-pointer"
+                      title="Jump to Bookmark"
+                    >
+                      {secondsToTimecode(m.time, sequence.fps).slice(3)}
+                    </button>
+                    <input
+                      type="text"
+                      aria-label={`Bookmark name ${m.label}`}
+                      value={m.label}
+                      onChange={(e) => onUpdateMarker?.(m.id, { label: e.target.value })}
+                      className="flex-1 min-w-0 bg-transparent text-[11px] text-[#E5E7EB] focus:outline-none border-b border-transparent focus:border-[#3B82F6]"
+                    />
+                    <div className="flex items-center gap-1 shrink-0">
+                      {(['emerald', 'amber', 'blue', 'rose'] as const).map((col) => (
+                        <button
+                          key={col}
+                          type="button"
+                          aria-label={`Set marker color ${col}`}
+                          onClick={() => onUpdateMarker?.(m.id, { color: col })}
+                          className={`w-2.5 h-2.5 rounded-full cursor-pointer ${
+                            col === 'amber'
+                              ? 'bg-[#F59E0B]'
+                              : col === 'blue'
+                              ? 'bg-[#3B82F6]'
+                              : col === 'rose'
+                              ? 'bg-[#F43F5E]'
+                              : 'bg-[#10B981]'
+                          } ${m.color === col ? 'ring-1 ring-white' : 'opacity-50'}`}
+                        />
+                      ))}
+                      {onDeleteMarker && (
+                        <button
+                          type="button"
+                          aria-label={`Delete bookmark ${m.label}`}
+                          onClick={() => onDeleteMarker(m.id)}
+                          className="p-0.5 text-[#8E939E] hover:text-[#F87171] cursor-pointer ml-1"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
+        </div>
+      )}
     </section>
   );
 });

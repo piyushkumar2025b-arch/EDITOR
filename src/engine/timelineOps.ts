@@ -710,3 +710,137 @@ export function liftOrExtractRange(
 export function toggleClipDisabled(clips: TimelineClip[], clipId: string): TimelineClip[] {
   return clips.map((c) => (c.id === clipId ? { ...c, disabled: !c.disabled } : c));
 }
+
+export function rippleTrimToPlayhead(
+  clips: TimelineClip[],
+  clipId: string,
+  edge: 'left' | 'right',
+  playheadTime: number,
+  minDuration: number = 0.25
+): TimelineClip[] {
+  const target = clips.find((c) => c.id === clipId);
+  if (!target) return clips;
+  const oldStart = target.startTime;
+  const oldEnd = target.startTime + target.duration;
+  if (playheadTime <= oldStart + 0.02 || playheadTime >= oldEnd - 0.02) {
+    return clips;
+  }
+
+  if (edge === 'left') {
+    const trimmed = Number((playheadTime - oldStart).toFixed(4));
+    const nextDuration = Math.max(minDuration, Number((oldEnd - playheadTime).toFixed(4)));
+    const actualTrimmed = Number((target.duration - nextDuration).toFixed(4));
+    if (actualTrimmed <= 0.001) return clips;
+    const nextSourceIn = Math.max(
+      0,
+      Number((target.sourceIn + trimmed * (target.speed || 1)).toFixed(4))
+    );
+    return clips.map((c) => {
+      if (c.id === clipId) {
+        return {
+          ...c,
+          startTime: oldStart,
+          duration: nextDuration,
+          sourceIn: nextSourceIn,
+        };
+      }
+      if (c.trackId === target.trackId && c.startTime >= oldEnd - 0.001) {
+        return {
+          ...c,
+          startTime: Math.max(0, Number((c.startTime - actualTrimmed).toFixed(4))),
+        };
+      }
+      return c;
+    });
+  } else {
+    const nextDuration = Math.max(minDuration, Number((playheadTime - oldStart).toFixed(4)));
+    const actualTrimmed = Number((target.duration - nextDuration).toFixed(4));
+    if (actualTrimmed <= 0.001) return clips;
+    return clips.map((c) => {
+      if (c.id === clipId) {
+        return {
+          ...c,
+          duration: nextDuration,
+        };
+      }
+      if (c.trackId === target.trackId && c.startTime >= oldEnd - 0.001) {
+        return {
+          ...c,
+          startTime: Math.max(0, Number((c.startTime - actualTrimmed).toFixed(4))),
+        };
+      }
+      return c;
+    });
+  }
+}
+
+export function findAdjacentClipPairAtPoint(
+  clips: TimelineClip[],
+  trackId: string,
+  time: number,
+  toleranceSec: number = 0.35
+): { leftClipId: string; rightClipId: string; cutTime: number } | null {
+  const trackClips = clips
+    .filter((c) => c.trackId === trackId)
+    .sort((a, b) => a.startTime - b.startTime);
+
+  for (let i = 0; i < trackClips.length - 1; i++) {
+    const left = trackClips[i];
+    const right = trackClips[i + 1];
+    const leftEnd = left.startTime + left.duration;
+    if (Math.abs(leftEnd - right.startTime) <= 0.08 && Math.abs(leftEnd - time) <= toleranceSec) {
+      return { leftClipId: left.id, rightClipId: right.id, cutTime: leftEnd };
+    }
+  }
+  return null;
+}
+
+export function rollEditCut(
+  clips: TimelineClip[],
+  leftClipId: string,
+  rightClipId: string,
+  newCutTime: number,
+  minDuration: number = 0.25
+): TimelineClip[] {
+  const left = clips.find((c) => c.id === leftClipId);
+  const right = clips.find((c) => c.id === rightClipId);
+  if (!left || !right || left.trackId !== right.trackId) return clips;
+
+  const rightEnd = right.startTime + right.duration;
+  const minCutBySource =
+    right.sourceIn > 0
+      ? right.startTime - right.sourceIn / (right.speed || 1)
+      : right.startTime;
+  const minCut = Math.max(left.startTime + minDuration, minCutBySource);
+  const maxCut = rightEnd - minDuration;
+  if (minCut >= maxCut) return clips;
+
+  const clampedCut = Number(Math.max(minCut, Math.min(maxCut, newCutTime)).toFixed(4));
+  const deltaRight = clampedCut - right.startTime;
+
+  return clips.map((c) => {
+    if (c.id === leftClipId) {
+      return {
+        ...c,
+        duration: Number((clampedCut - left.startTime).toFixed(4)),
+      };
+    }
+    if (c.id === rightClipId) {
+      return {
+        ...c,
+        startTime: clampedCut,
+        duration: Number((rightEnd - clampedCut).toFixed(4)),
+        sourceIn: Math.max(0, Number((right.sourceIn + deltaRight * (right.speed || 1)).toFixed(4))),
+      };
+    }
+    return c;
+  });
+}
+
+export function setClipLabelColor(
+  clips: TimelineClip[],
+  clipId: string,
+  labelColor: TimelineClip['labelColor']
+): TimelineClip[] {
+  return clips.map((c) => (c.id === clipId ? { ...c, labelColor } : c));
+}

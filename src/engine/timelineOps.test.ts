@@ -32,6 +32,10 @@ import {
   insertClipWithRipple,
   liftOrExtractRange,
   toggleClipDisabled,
+  rippleTrimToPlayhead,
+  findAdjacentClipPairAtPoint,
+  rollEditCut,
+  setClipLabelColor,
 } from './timelineOps';
 import { createDefaultColorGrade, DEFAULT_TRANSFORM } from './colorEngine';
 import { createSeedProject } from './seedProject';
@@ -263,5 +267,40 @@ test('Premiere NLE operations: rateStretchClip, moveClipsForward, insertClipWith
   assert.equal(extracted.find((c) => c.id === 'clip_2')?.startTime, 4.0);
   assert.equal(extracted.find((c) => c.id === 'clip_3')?.startTime, 9.5);
 });
+
+test('Premiere Q/W rippleTrimToPlayhead, Rolling Edit cut, and label colors work cleanly', () => {
+  const project = createSeedProject();
+
+  // W: ripple trim right edge of clip_1 (0..6) to 4.0s -> pulls clip_2 from 6.0 to 4.0
+  const wTrim = rippleTrimToPlayhead(project.clips, 'clip_1', 'right', 4.0);
+  assert.equal(wTrim.find((c) => c.id === 'clip_1')?.duration, 4.0);
+  assert.equal(wTrim.find((c) => c.id === 'clip_2')?.startTime, 4.0);
+  assert.equal(wTrim.find((c) => c.id === 'clip_3')?.startTime, 9.5);
+
+  // Q: ripple trim left edge of clip_1 (0..6) to 2.0s -> clip_1 stays at 0 (duration 4s, sourceIn 2s) and clip_2 pulls to 4.0s
+  const qTrim = rippleTrimToPlayhead(project.clips, 'clip_1', 'left', 2.0);
+  const c1q = qTrim.find((c) => c.id === 'clip_1');
+  assert.equal(c1q?.startTime, 0);
+  assert.equal(c1q?.duration, 4.0);
+  assert.equal(c1q?.sourceIn, 2.0);
+  assert.equal(qTrim.find((c) => c.id === 'clip_2')?.startTime, 4.0);
+
+  // Rolling edit between clip_1 (0..6) and clip_2 (6..11.5) shifted +1.5s to 7.5s
+  const pair = findAdjacentClipPairAtPoint(project.clips, 'v1', 6.1, 0.3);
+  assert.ok(pair);
+  assert.equal(pair.leftClipId, 'clip_1');
+  assert.equal(pair.rightClipId, 'clip_2');
+  const rolled = rollEditCut(project.clips, pair.leftClipId, pair.rightClipId, 7.5);
+  assert.equal(rolled.find((c) => c.id === 'clip_1')?.duration, 7.5);
+  assert.equal(rolled.find((c) => c.id === 'clip_2')?.startTime, 7.5);
+  assert.equal(rolled.find((c) => c.id === 'clip_2')?.duration, 4.0);
+  assert.equal(rolled.find((c) => c.id === 'clip_2')?.sourceIn, 1.5);
+  assert.equal(rolled.find((c) => c.id === 'clip_3')?.startTime, 11.5);
+
+  // Label color setter
+  const labeled = setClipLabelColor(project.clips, 'clip_1', 'violet');
+  assert.equal(labeled.find((c) => c.id === 'clip_1')?.labelColor, 'violet');
+});
+
 
 

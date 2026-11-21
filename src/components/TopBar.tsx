@@ -30,6 +30,7 @@ interface TopBarProps {
   onResetProject: () => void;
   onSaveProjectFile?: () => void;
   onLoadProjectFile?: (file: File) => void;
+  onUpdateSequenceSettings?: (patch: Partial<SequenceSettings>) => void;
   onOpenExport: () => void;
 }
 
@@ -59,6 +60,7 @@ const SHORTCUT_GROUPS: {
     title: 'Timeline & 3-Point Edits',
     items: [
       { keys: 'Ctrl + K / Shift+K', action: 'Split Clip / Cut All Tracks' },
+      { keys: 'Q / W', action: 'Ripple Trim Start / End to Playhead' },
       { keys: 'Ctrl + D / C / V', action: 'Duplicate / Copy / Paste Clip' },
       { keys: 'E', action: 'Enable / Disable Selected Clip' },
       { keys: "; / '", action: 'Lift / Extract In-Out Range' },
@@ -70,7 +72,7 @@ const SHORTCUT_GROUPS: {
     title: 'Premiere Edit Tools',
     items: [
       { keys: 'V / A', action: 'Select Clip / Track Select Ahead' },
-      { keys: 'C / B', action: 'Razor Cut / Trim Edges Tool' },
+      { keys: 'C / B / N', action: 'Razor Cut / Trim / Roll Cut' },
       { keys: 'R / Y', action: 'Rate Stretch Speed / Slip Offset' },
       { keys: 'T / H', action: 'Insert Title / Pan Timeline' },
       { keys: 'S / M', action: 'Magnet Snap / Add Bookmark' },
@@ -107,9 +109,11 @@ export const TopBar: React.FC<TopBarProps> = ({
   onResetProject,
   onSaveProjectFile,
   onLoadProjectFile,
+  onUpdateSequenceSettings,
   onOpenExport,
 }) => {
   const [internalShortcuts, setInternalShortcuts] = useState(false);
+  const [showSeqSettings, setShowSeqSettings] = useState(false);
   const showShortcuts = controlledShortcuts ?? internalShortcuts;
   const toggleShortcuts = onToggleShortcuts ?? (() => setInternalShortcuts((s) => !s));
   const closeShortcuts = () => {
@@ -129,7 +133,14 @@ export const TopBar: React.FC<TopBarProps> = ({
           Auteur Studio
         </span>
         <span className="h-3.5 w-px bg-[#2A2D35]" aria-hidden="true" />
-        <div className="hidden lg:flex items-center gap-2 text-[12px] text-[#8E939E] whitespace-nowrap">
+        <button
+          type="button"
+          onClick={() => setShowSeqSettings((s) => !s)}
+          aria-expanded={showSeqSettings}
+          aria-label="Sequence Settings"
+          title="Edit Sequence Name, Resolution & Frame Rate"
+          className="hidden lg:flex items-center gap-2 text-[12px] text-[#8E939E] hover:text-white px-2 py-1 rounded hover:bg-[#1E2027] transition-colors whitespace-nowrap cursor-pointer"
+        >
           <span className="text-[#C7CBD4] font-medium truncate max-w-[150px]">
             {sequence.name}
           </span>
@@ -137,7 +148,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           <span className="font-mono-tabular">
             {sequence.width}×{sequence.height} · {sequence.fps} fps
           </span>
-        </div>
+        </button>
       </div>
 
       {/* Zone 2: Workspace Switcher */}
@@ -244,6 +255,91 @@ export const TopBar: React.FC<TopBarProps> = ({
           <span>Save / Export</span>
         </button>
       </div>
+
+      {/* Sequence Settings Popover */}
+      {showSeqSettings && onUpdateSequenceSettings && (
+        <div
+          role="dialog"
+          aria-label="Sequence Settings Dialog"
+          className="absolute left-4 top-12 w-[360px] bg-[#181A20] border border-[#2D313B] rounded-md shadow-2xl p-3.5 z-50 space-y-3"
+        >
+          <div className="flex items-center justify-between border-b border-[#252830] pb-2">
+            <h2 className="text-[13px] font-semibold text-white">Sequence Settings</h2>
+            <button
+              type="button"
+              onClick={() => setShowSeqSettings(false)}
+              aria-label="Close Sequence Settings"
+              className="p-1 text-[#8E939E] hover:text-white rounded cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="space-y-1">
+            <label className="block text-[11px] text-[#9CA3AF]">Sequence Name</label>
+            <input
+              type="text"
+              aria-label="Sequence Name"
+              value={sequence.name}
+              onChange={(e) => onUpdateSequenceSettings({ name: e.target.value })}
+              className="w-full bg-[#101114] border border-[#282B33] rounded px-2.5 py-1.5 text-[12px] text-white"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="block text-[11px] text-[#9CA3AF]">Frame Rate (FPS)</label>
+            <div className="grid grid-cols-4 gap-1">
+              {[24, 25, 30, 60].map((fpsVal) => (
+                <button
+                  key={fpsVal}
+                  type="button"
+                  onClick={() => onUpdateSequenceSettings({ fps: fpsVal })}
+                  aria-pressed={sequence.fps === fpsVal}
+                  className={`py-1 text-[11px] font-mono-tabular rounded border cursor-pointer ${
+                    sequence.fps === fpsVal
+                      ? 'bg-[#252B36] border-[#3B82F6] text-white'
+                      : 'bg-[#101114] border-[#262930] text-[#9CA3AF] hover:text-white'
+                  }`}
+                >
+                  {fpsVal} fps
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="space-y-1">
+            <label className="block text-[11px] text-[#9CA3AF]">Canvas Resolution Preset</label>
+            <div className="grid grid-cols-2 gap-1">
+              {[
+                { label: '16:9 Full HD (1920×1080)', w: 1920, h: 1080 },
+                { label: '16:9 4K UHD (3840×2160)', w: 3840, h: 2160 },
+                { label: '9:16 Reels (1080×1920)', w: 1080, h: 1920 },
+                { label: '1:1 Square (1080×1080)', w: 1080, h: 1080 },
+              ].map((res) => (
+                <button
+                  key={res.label}
+                  type="button"
+                  onClick={() => onUpdateSequenceSettings({ width: res.w, height: res.h })}
+                  aria-pressed={sequence.width === res.w && sequence.height === res.h}
+                  className={`px-2 py-1.5 text-[10px] rounded border text-left cursor-pointer truncate ${
+                    sequence.width === res.w && sequence.height === res.h
+                      ? 'bg-[#252B36] border-[#3B82F6] text-white'
+                      : 'bg-[#101114] border-[#262930] text-[#9CA3AF] hover:text-white'
+                  }`}
+                >
+                  {res.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <label className="flex items-center justify-between pt-1 cursor-pointer">
+            <span className="text-[11px] text-[#C7CBD4]">Cinematic 2.39:1 Letterbox Bars</span>
+            <input
+              type="checkbox"
+              checked={Boolean(sequence.cinemaBars)}
+              onChange={(e) => onUpdateSequenceSettings({ cinemaBars: e.target.checked })}
+              className="accent-[#3B82F6] cursor-pointer"
+            />
+          </label>
+        </div>
+      )}
 
       {/* Categorized Keyboard Controls & Project Menu Popover */}
       {showShortcuts && (

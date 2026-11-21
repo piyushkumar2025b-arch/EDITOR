@@ -165,3 +165,22 @@ test('chromaKey removes green screen pixels and preserves foreground subjects', 
   assert.equal(px[3], 0);
   assert.equal(px[7], 255);
 });
+
+test('split toning tints shadows and highlights independently without disturbing neutral midpoints unnecessarily', () => {
+  const px = new Uint8ClampedArray([
+    30, 30, 30, 255, // dark shadow pixel
+    225, 225, 225, 255, // bright highlight pixel
+  ]);
+  const grade = {
+    ...createDefaultColorGrade(),
+    splitShadowHue: 240, // cool blue shadows
+    splitShadowSat: 80,
+    splitHighlightHue: 0, // warm red highlights
+    splitHighlightSat: 80,
+  };
+  applyColorGradeToImageData(px, grade);
+  // Dark shadow pixel gains blue channel relative to red
+  assert.ok(px[2] > px[0]);
+  // Bright highlight pixel gains red channel relative to blue
+  assert.ok(px[4] > px[6]);
+});

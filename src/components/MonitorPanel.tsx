@@ -17,7 +17,7 @@ import {
   VolumeX,
   X,
 } from 'lucide-react';
-import { secondsToTimecode } from '../engine/timecode';
+import { secondsToTimecode, timecodeToSeconds } from '../engine/timecode';
 import {
   ClipTransform,
   MediaAsset,
@@ -97,6 +97,8 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
 }) => {
   const [zoom, setZoom] = useState<'fit' | '50' | '100'>('fit');
   const [transformMode, setTransformMode] = useState(false);
+  const [editingTimecode, setEditingTimecode] = useState(false);
+  const [timecodeInput, setTimecodeInput] = useState('');
   const dragOriginRef = useRef<{
     clientX: number;
     clientY: number;
@@ -445,14 +447,46 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
 
       {/* Transport & Timecode Bar */}
       <div className="h-11 px-3 bg-[#16171B] border-t border-[#24272E] flex items-center justify-between gap-3 shrink-0">
-        {/* Left: Live SMPTE Timecode */}
-        <div className="flex items-center gap-2 min-w-[140px]">
-          <span
-            data-testid="program-timecode"
-            className="text-[13px] font-semibold font-mono-tabular text-[#3B82F6] tracking-tight"
-          >
-            {secondsToTimecode(currentTime, sequence.fps)}
-          </span>
+        {/* Left: Clickable SMPTE Timecode Direct Jump */}
+        <div className="flex items-center gap-2 min-w-[148px]">
+          {editingTimecode ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const val = timecodeInput.trim();
+                const parsedTc = timecodeToSeconds(val, sequence.fps);
+                const parsedSec = parsedTc !== null ? parsedTc : Number(val);
+                if (Number.isFinite(parsedSec) && parsedSec >= 0) {
+                  onSeek(parsedSec);
+                }
+                setEditingTimecode(false);
+              }}
+            >
+              <input
+                type="text"
+                autoFocus
+                aria-label="Jump to Timecode"
+                value={timecodeInput}
+                onChange={(e) => setTimecodeInput(e.target.value)}
+                onBlur={() => setEditingTimecode(false)}
+                className="w-[86px] bg-[#0E0F12] border border-[#3B82F6] rounded px-1.5 py-0.5 text-[12px] font-semibold font-mono-tabular text-white focus:outline-none"
+              />
+            </form>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setTimecodeInput(secondsToTimecode(currentTime, sequence.fps));
+                setEditingTimecode(true);
+              }}
+              data-testid="program-timecode"
+              title="Click to type a Timecode (HH:MM:SS:FF) or seconds and press Enter"
+              aria-label="Edit Timecode Jump"
+              className="text-[13px] font-semibold font-mono-tabular text-[#3B82F6] hover:text-[#60A5FA] tracking-tight cursor-pointer"
+            >
+              {secondsToTimecode(currentTime, sequence.fps)}
+            </button>
+          )}
           <span className="text-[11px] font-mono-tabular text-[#6B7280]">
             / {secondsToTimecode(duration, sequence.fps)}
           </span>

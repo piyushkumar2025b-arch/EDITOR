@@ -44,6 +44,8 @@ import {
   nudgeClip,
   pasteClipAtTime,
   rateStretchClip,
+  rippleTrimToPlayhead,
+  rollEditCut,
   slipClipSource,
   splitAllAtTime,
   splitClipAtTime,
@@ -60,7 +62,9 @@ import {
   ProjectState,
   ScopeData,
   SequenceAspectPreset,
+  SequenceSettings,
   TimelineClip,
+  TimelineMarker,
   ToolMode,
   WorkspaceMode,
 } from './engine/types';
@@ -416,6 +420,26 @@ export default function App() {
       }));
     },
     [commitProject, currentTime]
+  );
+
+  const handleRippleTrimToPlayhead = useCallback(
+    (clipId: string, edge: 'left' | 'right') => {
+      commitProject((prev) => ({
+        ...prev,
+        clips: rippleTrimToPlayhead(prev.clips, clipId, edge, currentTime),
+      }));
+    },
+    [commitProject, currentTime]
+  );
+
+  const handleRollEditCut = useCallback(
+    (leftClipId: string, rightClipId: string, newCutTime: number) => {
+      setProject((prev) => ({
+        ...prev,
+        clips: rollEditCut(prev.clips, leftClipId, rightClipId, newCutTime),
+      }));
+    },
+    []
   );
 
   const handleSplitClip = useCallback(
@@ -806,6 +830,36 @@ export default function App() {
     }));
   }, [commitProject, currentTime]);
 
+  const handleUpdateMarker = useCallback(
+    (markerId: string, patch: Partial<TimelineMarker>) => {
+      setProject((prev) => ({
+        ...prev,
+        markers: prev.markers.map((m) => (m.id === markerId ? { ...m, ...patch } : m)),
+      }));
+    },
+    []
+  );
+
+  const handleDeleteMarker = useCallback(
+    (markerId: string) => {
+      commitProject((prev) => ({
+        ...prev,
+        markers: prev.markers.filter((m) => m.id !== markerId),
+      }));
+    },
+    [commitProject]
+  );
+
+  const handleUpdateSequenceSettings = useCallback(
+    (patch: Partial<SequenceSettings>) => {
+      commitProject((prev) => ({
+        ...prev,
+        sequence: { ...prev.sequence, ...patch },
+      }));
+    },
+    [commitProject]
+  );
+
   const handleChangeAspectRatio = useCallback(
     (ratio: SequenceAspectPreset) => {
       const dims = getSequenceDimensionsForRatio(ratio);
@@ -964,10 +1018,16 @@ export default function App() {
         setActiveTool('trim');
       } else if (!mod && lower === 'r') {
         setActiveTool('rate-stretch');
+      } else if (!mod && lower === 'n') {
+        setActiveTool('roll');
       } else if (!mod && lower === 'y') {
         setActiveTool('slip');
       } else if (!mod && lower === 'h') {
         setActiveTool('hand');
+      } else if (!mod && lower === 'q' && selectedClipId) {
+        handleRippleTrimToPlayhead(selectedClipId, 'left');
+      } else if (!mod && lower === 'w' && selectedClipId) {
+        handleRippleTrimToPlayhead(selectedClipId, 'right');
       } else if (!mod && lower === 'e' && selectedClipId) {
         handleToggleClipDisabled(selectedClipId);
       } else if (e.key === '`') {
@@ -1023,6 +1083,7 @@ export default function App() {
     handleInsertAssetToTimeline,
     handleLiftRange,
     handleRedo,
+    handleRippleTrimToPlayhead,
     handleSplitAllAtPlayhead,
     handleSplitClip,
     handleToggleClipDisabled,
@@ -1055,6 +1116,7 @@ export default function App() {
           }
         }}
         sequence={project.sequence}
+        onUpdateSequenceSettings={handleUpdateSequenceSettings}
         canUndo={past.length > 0}
         canRedo={future.length > 0}
         onUndo={handleUndo}
@@ -1360,8 +1422,10 @@ export default function App() {
             onMoveClipsForward={handleMoveClipsForward}
             onTrimClip={handleTrimClip}
             onRateStretchClip={handleRateStretchClip}
+            onRollEditCut={handleRollEditCut}
             onSlipClip={handleSlipClip}
             onTrimClipToPlayhead={handleTrimClipToPlayhead}
+            onRippleTrimToPlayhead={handleRippleTrimToPlayhead}
             onSplitClip={handleSplitClip}
             onSplitAllAtPlayhead={handleSplitAllAtPlayhead}
             onDeleteClip={handleDeleteClip}
@@ -1371,6 +1435,8 @@ export default function App() {
             onExtractRange={handleExtractRange}
             onDuplicateClip={handleDuplicateClip}
             onAddMarker={handleAddMarker}
+            onUpdateMarker={handleUpdateMarker}
+            onDeleteMarker={handleDeleteMarker}
             onAddTextAtPlayhead={() => handleAddTitleClip('hero')}
             onToggleTrackProp={handleToggleTrackProp}
             onAddTrack={(type) =>
@@ -1405,7 +1471,7 @@ export default function App() {
                 fadeOut: 0.2,
                 gainDb: 0,
                 transform: { ...DEFAULT_TRANSFORM },
-                effects: { ...DEFAULT_EFFECTS },
+                effects: structuredClone(DEFAULT_EFFECTS),
                 color: createDefaultColorGrade(),
               };
               commitProject((prev) => ({

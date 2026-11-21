@@ -31,6 +31,7 @@ import {
   AudioTonePreset,
   BlendMode,
   ClipEffects,
+  ClipLabelColor,
   ClipTransform,
   ColorGrade,
   KeyframeProperty,
@@ -404,6 +405,34 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               {selectedClip.name}
             </span>
             <div className="flex items-center gap-1.5 shrink-0">
+              <div className="flex items-center gap-1 pr-1" role="group" aria-label="Clip Color Label">
+                {(
+                  [
+                    { id: 'default', bg: '#4B5563', label: 'Default Label' },
+                    { id: 'cerulean', bg: '#3B82F6', label: 'Blue Label' },
+                    { id: 'violet', bg: '#8B5CF6', label: 'Purple Label' },
+                    { id: 'emerald', bg: '#10B981', label: 'Green Label' },
+                    { id: 'amber', bg: '#F59E0B', label: 'Amber Label' },
+                    { id: 'rose', bg: '#F43F5E', label: 'Rose Label' },
+                  ] as { id: ClipLabelColor; bg: string; label: string }[]
+                ).map((lbl) => (
+                  <button
+                    key={lbl.id}
+                    type="button"
+                    aria-label={lbl.label}
+                    title={lbl.label}
+                    onClick={() =>
+                      onUpdateClip(selectedClip.id, (c) => ({ ...c, labelColor: lbl.id }))
+                    }
+                    className={`w-2.5 h-2.5 rounded-full cursor-pointer transition-transform ${
+                      (selectedClip.labelColor ?? 'default') === lbl.id
+                        ? 'ring-1.5 ring-white scale-115'
+                        : 'opacity-65 hover:opacity-100'
+                    }`}
+                    style={{ backgroundColor: lbl.bg }}
+                  />
+                ))}
+              </div>
               {onToggleClipDisabled && (
                 <button
                   type="button"
@@ -699,6 +728,98 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             </CollapsibleSection>
 
             <CollapsibleSection
+              title="Split Toning (Shadow / Highlight Tint)"
+              defaultOpen={false}
+              onReset={() =>
+                updateColor({
+                  splitShadowHue: 210,
+                  splitShadowSat: 0,
+                  splitHighlightHue: 38,
+                  splitHighlightSat: 0,
+                })
+              }
+            >
+              <div className="grid grid-cols-3 gap-1">
+                <button
+                  type="button"
+                  onClick={() =>
+                    updateColor({
+                      splitShadowHue: 195,
+                      splitShadowSat: 45,
+                      splitHighlightHue: 34,
+                      splitHighlightSat: 48,
+                    })
+                  }
+                  className="py-1 text-[10px] text-[#D1D5DB] hover:text-white bg-[#101114] border border-[#262930] rounded cursor-pointer"
+                >
+                  Teal &amp; Warm
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    updateColor({
+                      splitShadowHue: 245,
+                      splitShadowSat: 42,
+                      splitHighlightHue: 46,
+                      splitHighlightSat: 52,
+                    })
+                  }
+                  className="py-1 text-[10px] text-[#D1D5DB] hover:text-white bg-[#101114] border border-[#262930] rounded cursor-pointer"
+                >
+                  Indigo &amp; Gold
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    updateColor({
+                      splitShadowSat: 0,
+                      splitHighlightSat: 0,
+                    })
+                  }
+                  className="py-1 text-[10px] text-[#9CA3AF] hover:text-white bg-[#101114] border border-[#262930] rounded cursor-pointer"
+                >
+                  Clear Tint
+                </button>
+              </div>
+              <SliderRow
+                label="Shadow Tint Hue"
+                value={selectedClip.color.splitShadowHue ?? 210}
+                min={0}
+                max={360}
+                unit="°"
+                defaultValue={210}
+                onChange={(v) => updateColor({ splitShadowHue: v })}
+              />
+              <SliderRow
+                label="Shadow Tint Amount"
+                value={selectedClip.color.splitShadowSat ?? 0}
+                min={0}
+                max={100}
+                unit="%"
+                defaultValue={0}
+                onChange={(v) => updateColor({ splitShadowSat: v })}
+              />
+              <SliderRow
+                label="Highlight Tint Hue"
+                value={selectedClip.color.splitHighlightHue ?? 38}
+                min={0}
+                max={360}
+                unit="°"
+                defaultValue={38}
+                onChange={(v) => updateColor({ splitHighlightHue: v })}
+              />
+              <SliderRow
+                label="Highlight Tint Amount"
+                value={selectedClip.color.splitHighlightSat ?? 0}
+                min={0}
+                max={100}
+                unit="%"
+                defaultValue={0}
+                onChange={(v) => updateColor({ splitHighlightSat: v })}
+              />
+            </CollapsibleSection>
+
+            <CollapsibleSection
               title="Dark Edges & Grain"
               defaultOpen={false}
               onReset={() => updateColor({ vignette: 0, grain: 0 })}
@@ -863,6 +984,26 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                       {sh.label}
                     </button>
                   ))}
+                </div>
+                <div className="pt-1 space-y-1.5">
+                  <SliderRow
+                    label="Mask Feather (Soft Edge)"
+                    value={clipEffects.maskFeather ?? 0}
+                    min={0}
+                    max={40}
+                    unit=" px"
+                    onChange={(v) => updateEffects({ maskFeather: v })}
+                  />
+                  <label className="flex items-center justify-between cursor-pointer">
+                    <span className="text-[11px] text-[#A8AEB8]">Invert Mask Cutout</span>
+                    <input
+                      type="checkbox"
+                      aria-label="Invert Mask Cutout"
+                      checked={Boolean(clipEffects.maskInvert)}
+                      onChange={(e) => updateEffects({ maskInvert: e.target.checked })}
+                      className="accent-[#3B82F6] cursor-pointer"
+                    />
+                  </label>
                 </div>
               </div>
 
@@ -1668,9 +1809,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               <div className="grid grid-cols-4 gap-1">
                 {[
                   { label: 'Mute', db: -36 },
-                  { label: 'Duck -10', db: -10 },
-                  { label: '0 dB', db: 0 },
-                  { label: '+4 dB', db: 4 },
+                  { label: 'Duck -12', db: -12 },
+                  { label: 'Normalize', db: 0 },
+                  { label: 'Boost +4', db: 4 },
                 ].map((vol) => (
                   <button
                     key={vol.label}

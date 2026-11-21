@@ -34,8 +34,44 @@ export interface RenderOptions {
 // Reusable scratch canvases
 let scratchCanvas: HTMLCanvasElement | null = null;
 let scratchCtx: CanvasRenderingContext2D | null = null;
+let maskCompCanvas: HTMLCanvasElement | null = null;
+let maskCompCtx: CanvasRenderingContext2D | null = null;
+let maskAlphaCanvas: HTMLCanvasElement | null = null;
+let maskAlphaCtx: CanvasRenderingContext2D | null = null;
 let scopeCanvas: HTMLCanvasElement | null = null;
 let scopeCtx: CanvasRenderingContext2D | null = null;
+
+function getMaskAuxCanvases(width: number, height: number): {
+  compCtx: CanvasRenderingContext2D;
+  alphaCtx: CanvasRenderingContext2D;
+  compCanvas: HTMLCanvasElement;
+  alphaCanvas: HTMLCanvasElement;
+} | null {
+  if (typeof document === 'undefined') return null;
+  if (!maskCompCanvas) {
+    maskCompCanvas = document.createElement('canvas');
+    maskCompCtx = maskCompCanvas.getContext('2d');
+  }
+  if (!maskAlphaCanvas) {
+    maskAlphaCanvas = document.createElement('canvas');
+    maskAlphaCtx = maskAlphaCanvas.getContext('2d');
+  }
+  if (maskCompCanvas.width !== width || maskCompCanvas.height !== height) {
+    maskCompCanvas.width = width;
+    maskCompCanvas.height = height;
+  }
+  if (maskAlphaCanvas.width !== width || maskAlphaCanvas.height !== height) {
+    maskAlphaCanvas.width = width;
+    maskAlphaCanvas.height = height;
+  }
+  if (!maskCompCtx || !maskAlphaCtx) return null;
+  return {
+    compCtx: maskCompCtx,
+    alphaCtx: maskAlphaCtx,
+    compCanvas: maskCompCanvas,
+    alphaCanvas: maskAlphaCanvas,
+  };
+}
 
 // LRU cache of pre-graded static image frames so playback, scrubbing, and motion stay 60fps
 const GRADED_CACHE_MAX = 24;
@@ -726,17 +762,56 @@ export function renderClipToCanvas(
     const cBottom = (evaluatedTf.cropBottom / 100) * canvasHeight;
     const cLeft = (evaluatedTf.cropLeft / 100) * canvasWidth;
     const cRight = (evaluatedTf.cropRight / 100) * canvasWidth;
-    drawMaskShapePath(
-      ctx,
-      clip.effects?.maskShape,
-      cLeft,
-      cTop,
-      Math.max(1, canvasWidth - cLeft - cRight),
-      Math.max(1, canvasHeight - cTop - cBottom),
-      (clip.effects?.cornerRadius ?? 0) * minScaleFactor
-    );
-    ctx.clip();
-    ctx.drawImage(sCtx.canvas, 0, 0);
+    const maskFeatherPx = (clip.effects?.maskFeather ?? 0) * minScaleFactor;
+    const maskInvert = Boolean(clip.effects?.maskInvert);
+    const adjW = Math.max(1, canvasWidth - cLeft - cRight);
+    const adjH = Math.max(1, canvasHeight - cTop - cBottom);
+
+    if (maskFeatherPx > 0.5 || maskInvert) {
+      const aux = getMaskAuxCanvases(canvasWidth, canvasHeight);
+      if (aux) {
+        aux.alphaCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+        aux.alphaCtx.save();
+        if (maskFeatherPx > 0.5) aux.alphaCtx.filter = `blur(${maskFeatherPx}px)`;
+        if (maskInvert) {
+          aux.alphaCtx.fillStyle = '#ffffff';
+          aux.alphaCtx.fillRect(0, 0, canvasWidth, canvasHeight);
+          aux.alphaCtx.globalCompositeOperation = 'destination-out';
+        }
+        drawMaskShapePath(
+          aux.alphaCtx,
+          clip.effects?.maskShape,
+          cLeft,
+          cTop,
+          adjW,
+          adjH,
+          (clip.effects?.cornerRadius ?? 0) * minScaleFactor
+        );
+        aux.alphaCtx.fillStyle = '#ffffff';
+        aux.alphaCtx.fill();
+        aux.alphaCtx.restore();
+
+        sCtx.save();
+        sCtx.globalCompositeOperation = 'destination-in';
+        sCtx.drawImage(aux.alphaCanvas, 0, 0);
+        sCtx.restore();
+        ctx.drawImage(sCtx.canvas, 0, 0);
+      } else {
+        ctx.drawImage(sCtx.canvas, 0, 0);
+      }
+    } else {
+      drawMaskShapePath(
+        ctx,
+        clip.effects?.maskShape,
+        cLeft,
+        cTop,
+        adjW,
+        adjH,
+        (clip.effects?.cornerRadius ?? 0) * minScaleFactor
+      );
+      ctx.clip();
+      ctx.drawImage(sCtx.canvas, 0, 0);
+    }
     if (clip.color.vignette !== 0 || clip.color.grain > 0) {
       drawVignetteAndGrain(ctx, canvasWidth, canvasHeight, clip.color.vignette, clip.color.grain, localTime);
     }
@@ -952,11 +1027,68 @@ export function renderClipToCanvas(
     ctx.restore();
   }
 
-  ctx.save();
-  drawMaskShapePath(ctx, maskShape, cropX, cropY, croppedW, croppedH, cornerRad);
-  ctx.clip();
-  ctx.drawImage(sourceToDraw, -drawW / 2, -drawH / 2, drawW, drawH);
-  ctx.restore();
+  const maskFeatherPx = (clip.effects?.maskFeather ?? 0) * minScaleFactor;
+  const maskInvert = Boolean(clip.effects?.maskInvert);
+
+  if (maskFeatherPx > 0.5 || maskInvert) {
+    const aux = getMaskAuxCanvases(canvasWidth, canvasHeight);
+    if (aux) {
+      aux.compCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+      aux.compCtx.save();
+      aux.compCtx.translate(
+        canvasWidth / 2 + evaluatedTf.x * scaleXFactor + motionPanX + slideOffsetX,
+        canvasHeight / 2 + evaluatedTf.y * scaleYFactor + motionPanY + slideOffsetY
+      );
+      aux.compCtx.rotate(((evaluatedTf.rotation + motionRotDeg + transitionRotDeg) * Math.PI) / 180);
+      aux.compCtx.scale(
+        totalScale * (evaluatedTf.flipH ? -1 : 1),
+        totalScale * (evaluatedTf.flipV ? -1 : 1)
+      );
+      aux.compCtx.beginPath();
+      aux.compCtx.rect(cropX, cropY, croppedW, croppedH);
+      aux.compCtx.clip();
+      aux.compCtx.drawImage(sourceToDraw, -drawW / 2, -drawH / 2, drawW, drawH);
+      aux.compCtx.restore();
+
+      aux.alphaCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+      aux.alphaCtx.save();
+      if (maskFeatherPx > 0.5) aux.alphaCtx.filter = `blur(${maskFeatherPx}px)`;
+      if (maskInvert) {
+        aux.alphaCtx.fillStyle = '#ffffff';
+        aux.alphaCtx.fillRect(0, 0, canvasWidth, canvasHeight);
+        aux.alphaCtx.globalCompositeOperation = 'destination-out';
+      }
+      aux.alphaCtx.translate(
+        canvasWidth / 2 + evaluatedTf.x * scaleXFactor + motionPanX + slideOffsetX,
+        canvasHeight / 2 + evaluatedTf.y * scaleYFactor + motionPanY + slideOffsetY
+      );
+      aux.alphaCtx.rotate(((evaluatedTf.rotation + motionRotDeg + transitionRotDeg) * Math.PI) / 180);
+      aux.alphaCtx.scale(
+        totalScale * (evaluatedTf.flipH ? -1 : 1),
+        totalScale * (evaluatedTf.flipV ? -1 : 1)
+      );
+      drawMaskShapePath(aux.alphaCtx, maskShape, cropX, cropY, croppedW, croppedH, cornerRad);
+      aux.alphaCtx.fillStyle = '#ffffff';
+      aux.alphaCtx.fill();
+      aux.alphaCtx.restore();
+
+      aux.compCtx.save();
+      aux.compCtx.globalCompositeOperation = 'destination-in';
+      aux.compCtx.drawImage(aux.alphaCanvas, 0, 0);
+      aux.compCtx.restore();
+
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.drawImage(aux.compCanvas, 0, 0);
+      ctx.restore();
+    }
+  } else {
+    ctx.save();
+    drawMaskShapePath(ctx, maskShape, cropX, cropY, croppedW, croppedH, cornerRad);
+    ctx.clip();
+    ctx.drawImage(sourceToDraw, -drawW / 2, -drawH / 2, drawW, drawH);
+    ctx.restore();
+  }
 
   if (borderW > 0.25) {
     drawMaskShapePath(ctx, maskShape, cropX, cropY, croppedW, croppedH, cornerRad);

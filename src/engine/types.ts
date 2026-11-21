@@ -2,11 +2,14 @@ export type MediaKind = 'video' | 'image' | 'audio' | 'title' | 'adjustment' | '
 
 export type WorkspaceMode = 'editing' | 'color' | 'photo' | 'audio';
 
+export type ClipLabelColor = 'default' | 'cerulean' | 'violet' | 'emerald' | 'amber' | 'rose';
+
 export type ToolMode =
   | 'select'
   | 'track-select'
   | 'razor'
   | 'trim'
+  | 'roll'
   | 'rate-stretch'
   | 'slip'
   | 'hand'
@@ -125,6 +128,10 @@ export interface ColorGrade {
   sharpness: number; // 0..100
   hueShift?: number; // -180..180 degrees
   dehaze?: number; // -50..100
+  splitShadowHue?: number; // 0..360 deg
+  splitShadowSat?: number; // 0..100 %
+  splitHighlightHue?: number; // 0..360 deg
+  splitHighlightSat?: number; // 0..100 %
   vignette: number; // -100..100 (negative darkens edges, positive brightens)
   grain: number; // 0..100
   lift: ColorWheelOffset;
@@ -157,6 +164,8 @@ export interface ClipEffects {
   tiltShift?: number; // 0..100 % soft top/bottom blur focus
   mirrorMode?: MirrorEffectMode;
   maskShape?: MaskShape;
+  maskFeather?: number; // 0..40 px
+  maskInvert?: boolean;
   chromaKey?: ChromaKeySettings;
 }
 
@@ -232,6 +241,7 @@ export interface TimelineClip {
   trackId: string;
   name: string;
   kind: MediaKind;
+  labelColor?: ClipLabelColor;
   disabled?: boolean;
   startTime: number; // seconds on timeline
   duration: number; // seconds on timeline

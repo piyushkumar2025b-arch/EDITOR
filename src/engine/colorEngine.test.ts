@@ -6,7 +6,9 @@ import {
   computeAutoBalanceGrade,
   computeScopesFromImageData,
   createDefaultColorGrade,
+  DEFAULT_EFFECTS,
   isColorGradeIdentity,
+  PHOTO_STYLE_PRESETS,
 } from './colorEngine';
 
 test('default color grade is detected as identity and leaves pixels untouched', () => {
@@ -36,6 +38,18 @@ test('positive exposure brightens pixel values and monochrome LUT equalizes chan
   assert.equal(colorPixels[1], colorPixels[2]);
 });
 
+test('sepia and vintageFade visual filters warm tones and lift black floor', () => {
+  const grade = createDefaultColorGrade();
+  const darkPixels = new Uint8ClampedArray([0, 0, 0, 255]);
+  applyColorGradeToImageData(darkPixels, grade, { ...DEFAULT_EFFECTS, vintageFade: 100 });
+  assert.ok(darkPixels[0] >= 30 && darkPixels[2] >= 30);
+
+  const neutral = new Uint8ClampedArray([120, 120, 120, 255]);
+  applyColorGradeToImageData(neutral, grade, { ...DEFAULT_EFFECTS, sepia: 100 });
+  assert.ok(neutral[0] > neutral[1] && neutral[1] > neutral[2]);
+  assert.ok(PHOTO_STYLE_PRESETS.length >= 6);
+});
+
 test('buildToneCurveLUT preserves endpoints and lifts midtones when midpoint raised', () => {
   const lut = buildToneCurveLUT([
     { x: 0, y: 0 },
@@ -48,7 +62,6 @@ test('buildToneCurveLUT preserves endpoints and lifts midtones when midpoint rai
 });
 
 test('computeScopesFromImageData populates RGB histograms and waveform accurately', () => {
-  // 4x4 solid red image
   const data = new Uint8ClampedArray(4 * 4 * 4);
   for (let i = 0; i < data.length; i += 4) {
     data[i] = 220;

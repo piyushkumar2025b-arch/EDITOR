@@ -1,6 +1,9 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { memo, useMemo, useRef, useState } from 'react';
 import {
+  ArrowLeftToLine,
+  ArrowRightToLine,
   Bookmark,
+  Columns2,
   Copy,
   Eye,
   EyeOff,
@@ -50,8 +53,11 @@ interface TimelinePanelProps {
   onSeek: (time: number) => void;
   onMoveClip: (clipId: string, newStartTime: number, newTrackId: string) => void;
   onTrimClip: (clipId: string, edge: 'left' | 'right', newTime: number) => void;
+  onTrimClipToPlayhead: (clipId: string, edge: 'left' | 'right') => void;
   onSplitClip: (clipId: string, splitTime: number) => void;
+  onSplitAllAtPlayhead: () => void;
   onDeleteClip: (clipId: string, ripple: boolean) => void;
+  onCloseTrackGaps: (trackId: string) => void;
   onDuplicateClip: (clipId: string) => void;
   onAddMarker: () => void;
   onAddTextAtPlayhead: () => void;
@@ -63,7 +69,7 @@ interface TimelinePanelProps {
 
 const TRACK_HEIGHT = 48;
 
-export const TimelinePanel: React.FC<TimelinePanelProps> = ({
+export const TimelinePanel: React.FC<TimelinePanelProps> = memo(({
   sequence,
   tracks,
   clips,
@@ -81,8 +87,11 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({
   onSeek,
   onMoveClip,
   onTrimClip,
+  onTrimClipToPlayhead,
   onSplitClip,
+  onSplitAllAtPlayhead,
   onDeleteClip,
+  onCloseTrackGaps,
   onDuplicateClip,
   onAddMarker,
   onAddTextAtPlayhead,
@@ -93,9 +102,10 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({
 }) => {
   const [pixelsPerSecond, setPixelsPerSecond] = useState(52);
   const [dragState, setDragState] = useState<{
-    mode: 'move' | 'trim-left' | 'trim-right' | 'scrub';
+    mode: 'move' | 'trim-left' | 'trim-right' | 'scrub' | 'pan';
     clipId?: string;
     startClientX: number;
+    origScrollLeft?: number;
     origStartTime: number;
     origDuration: number;
     origTrackId: string;
@@ -103,6 +113,10 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({
 
   const lanesRef = useRef<HTMLDivElement>(null);
   const assetMap = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets]);
+  const selectedClip = useMemo(
+    () => clips.find((c) => c.id === selectedClipId) ?? null,
+    [clips, selectedClipId]
+  );
 
   const timelineWidth = Math.max(960, Math.ceil((duration + 6) * pixelsPerSecond));
   const ticks = useMemo(
@@ -134,6 +148,11 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({
     if (!dragState) return;
     if (dragState.mode === 'scrub') {
       onSeek(clientXToTime(e.clientX));
+      return;
+    }
+    if (dragState.mode === 'pan' && lanesRef.current) {
+      const dx = e.clientX - dragState.startClientX;
+      lanesRef.current.scrollLeft = Math.max(0, (dragState.origScrollLeft ?? 0) - dx);
       return;
     }
 
@@ -176,49 +195,51 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({
   };
 
   const tools: { id: ToolMode; label: string; shortLabel: string; shortcut: string; icon: React.ReactNode }[] = [
-    { id: 'select', label: 'Selection Tool', shortLabel: 'Select', shortcut: 'V', icon: <MousePointer2 className="w-3.5 h-3.5" /> },
-    { id: 'razor', label: 'Razor Split Tool', shortLabel: 'Cut', shortcut: 'C', icon: <Scissors className="w-3.5 h-3.5" /> },
-    { id: 'trim', label: 'Trim Edit Tool', shortLabel: 'Trim', shortcut: 'B', icon: <MoveHorizontal className="w-3.5 h-3.5" /> },
-    { id: 'text', label: 'Type / Title Tool', shortLabel: 'Title', shortcut: 'T', icon: <Type className="w-3.5 h-3.5" /> },
-    { id: 'hand', label: 'Hand Tool', shortLabel: 'Pan', shortcut: 'H', icon: <Hand className="w-3.5 h-3.5" /> },
+    { id: 'select', label: 'Select & Move Tool', shortLabel: 'Select', shortcut: 'V', icon: <MousePointer2 className="w-3.5 h-3.5" /> },
+    { id: 'razor', label: 'Cut Clip Tool', shortLabel: 'Cut', shortcut: 'C', icon: <Scissors className="w-3.5 h-3.5" /> },
+    { id: 'trim', label: 'Trim Edges Tool', shortLabel: 'Trim', shortcut: 'B', icon: <MoveHorizontal className="w-3.5 h-3.5" /> },
+    { id: 'text', label: 'Add Text Overlay', shortLabel: 'Text', shortcut: 'T', icon: <Type className="w-3.5 h-3.5" /> },
+    { id: 'hand', label: 'Scroll / Pan Timeline', shortLabel: 'Pan', shortcut: 'H', icon: <Hand className="w-3.5 h-3.5" /> },
   ];
 
   const activeToolHint =
     activeTool === 'razor'
-      ? 'Razor Mode (C): Click any clip to cut'
+      ? 'Cut Mode (C): Click any clip to split it'
       : activeTool === 'trim'
-      ? 'Trim Mode (B): Drag clip edges to trim'
+      ? 'Trim Mode (B): Drag clip edges shorter or longer'
+      : activeTool === 'hand'
+      ? 'Pan Mode (H): Drag tracks left or right to scroll'
       : 'Select Mode (V): Drag clips to move · Drag edges to trim';
 
   return (
     <section
-      aria-label="Multi-Track Sequence Timeline"
+      aria-label="Timeline Editor"
       className="flex flex-col h-full bg-[#141519] border-t border-[#262930] select-none overflow-hidden"
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerLeave={handlePointerUp}
     >
       {/* Timeline Top Action Bar */}
-      <div className="h-9 px-3 bg-[#17191E] border-b border-[#24272E] flex items-center justify-between gap-3 shrink-0 overflow-x-auto">
-        <div className="flex items-center gap-3 shrink-0">
+      <div className="h-9 px-3 bg-[#17191E] border-b border-[#24272E] flex items-center justify-between gap-2 shrink-0 overflow-x-auto">
+        <div className="flex items-center gap-2.5 shrink-0">
           <span className="text-[12px] font-semibold text-[#D1D5DB] whitespace-nowrap">
-            Timeline · {sequence.name}
+            Timeline
           </span>
           <span className="text-[11px] font-mono-tabular text-[#7D838F] whitespace-nowrap">
             {clips.length} clips
           </span>
-          <span className="hidden xl:inline text-[11px] text-[#8E939E] whitespace-nowrap">
+          <span className="hidden 2xl:inline text-[11px] text-[#8E939E] whitespace-nowrap">
             {activeToolHint}
           </span>
         </div>
 
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-1 shrink-0">
           <button
             type="button"
             onClick={onToggleSnap}
             aria-pressed={snapEnabled}
-            title="Snap to Playhead & Clip Edges (S)"
-            aria-label="Toggle Snapping"
+            title="Magnet Snap to Edges & Playhead (S)"
+            aria-label="Toggle Magnet Snap"
             className={`flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded border cursor-pointer transition-colors whitespace-nowrap ${
               snapEnabled
                 ? 'bg-[#3B82F6]/15 border-[#3B82F6]/60 text-[#60A5FA]'
@@ -232,19 +253,30 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({
           <button
             type="button"
             onClick={onAddMarker}
-            title="Add Timeline Marker at Playhead (M)"
-            aria-label="Add Marker"
+            title="Add Timeline Bookmark at Playhead (M)"
+            aria-label="Add Bookmark"
             className="flex items-center gap-1 px-2 py-1 text-[11px] text-[#C7CBD4] hover:text-white bg-[#1D1F26] border border-[#292D36] rounded cursor-pointer whitespace-nowrap"
           >
             <Bookmark className="w-3 h-3" />
-            <span>Marker</span>
+            <span>Bookmark</span>
           </button>
 
-          {selectedClipId && (
+          <button
+            type="button"
+            onClick={onSplitAllAtPlayhead}
+            title="Cut All Tracks at Playhead"
+            aria-label="Cut All Tracks"
+            className="flex items-center gap-1 px-2 py-1 text-[11px] text-[#C7CBD4] hover:text-white bg-[#1D1F26] border border-[#292D36] rounded cursor-pointer whitespace-nowrap"
+          >
+            <Columns2 className="w-3 h-3" />
+            <span>Cut All</span>
+          </button>
+
+          {selectedClip && (
             <>
               <button
                 type="button"
-                onClick={() => onSplitClip(selectedClipId, currentTime)}
+                onClick={() => onSplitClip(selectedClip.id, currentTime)}
                 title="Split Selected Clip at Playhead"
                 aria-label="Split Clip at Playhead"
                 className="flex items-center gap-1 px-2 py-1 text-[11px] text-[#C7CBD4] hover:text-white bg-[#1D1F26] border border-[#292D36] rounded cursor-pointer whitespace-nowrap"
@@ -254,17 +286,35 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => onApplyQuickDissolve(selectedClipId)}
-                title="Toggle Cross Dissolve In/Out on Selected Clip"
-                aria-label="Apply Cross Dissolve"
-                className="flex items-center gap-1 px-2 py-1 text-[11px] text-[#C7CBD4] hover:text-white bg-[#1D1F26] border border-[#292D36] rounded cursor-pointer whitespace-nowrap"
+                onClick={() => onTrimClipToPlayhead(selectedClip.id, 'left')}
+                title="Trim Clip Start to Playhead"
+                aria-label="Trim Start to Playhead"
+                className="p-1.5 text-[#C7CBD4] hover:text-white bg-[#1D1F26] border border-[#292D36] rounded cursor-pointer"
               >
-                <Sparkles className="w-3 h-3" />
-                <span>Dissolve</span>
+                <ArrowRightToLine className="w-3 h-3" />
               </button>
               <button
                 type="button"
-                onClick={() => onDuplicateClip(selectedClipId)}
+                onClick={() => onTrimClipToPlayhead(selectedClip.id, 'right')}
+                title="Trim Clip End to Playhead"
+                aria-label="Trim End to Playhead"
+                className="p-1.5 text-[#C7CBD4] hover:text-white bg-[#1D1F26] border border-[#292D36] rounded cursor-pointer"
+              >
+                <ArrowLeftToLine className="w-3 h-3" />
+              </button>
+              <button
+                type="button"
+                onClick={() => onApplyQuickDissolve(selectedClip.id)}
+                title="Toggle Smooth Fade In & Out"
+                aria-label="Toggle Smooth Fade"
+                className="flex items-center gap-1 px-2 py-1 text-[11px] text-[#C7CBD4] hover:text-white bg-[#1D1F26] border border-[#292D36] rounded cursor-pointer whitespace-nowrap"
+              >
+                <Sparkles className="w-3 h-3" />
+                <span>Fade</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onDuplicateClip(selectedClip.id)}
                 title="Duplicate Selected Clip"
                 aria-label="Duplicate Clip"
                 className="p-1.5 text-[#C7CBD4] hover:text-white bg-[#1D1F26] border border-[#292D36] rounded cursor-pointer"
@@ -273,16 +323,25 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => onDeleteClip(selectedClipId, true)}
-                title="Ripple Delete (Close Gap) (Shift+Delete)"
-                aria-label="Ripple Delete Clip"
-                className="px-2 py-1 text-[11px] text-[#FCA5A5] hover:text-white hover:bg-[#DC2626]/25 bg-[#1D1F26] border border-[#292D36] rounded cursor-pointer whitespace-nowrap"
+                onClick={() => onCloseTrackGaps(selectedClip.trackId)}
+                title="Remove All Empty Gaps on This Track"
+                aria-label="Pack Track"
+                className="px-2 py-1 text-[11px] text-[#C7CBD4] hover:text-white bg-[#1D1F26] border border-[#292D36] rounded cursor-pointer whitespace-nowrap"
               >
-                Ripple Del
+                Pack Track
               </button>
               <button
                 type="button"
-                onClick={() => onDeleteClip(selectedClipId, false)}
+                onClick={() => onDeleteClip(selectedClip.id, true)}
+                title="Delete Clip and Close Gap (Shift+Delete)"
+                aria-label="Delete and Close Gap"
+                className="px-2 py-1 text-[11px] text-[#FCA5A5] hover:text-white hover:bg-[#DC2626]/25 bg-[#1D1F26] border border-[#292D36] rounded cursor-pointer whitespace-nowrap"
+              >
+                Close Gap
+              </button>
+              <button
+                type="button"
+                onClick={() => onDeleteClip(selectedClip.id, false)}
                 title="Delete Selected Clip (Backspace)"
                 aria-label="Delete Selected Clip"
                 className="p-1.5 text-[#F87171] hover:text-white hover:bg-[#DC2626]/20 bg-[#1D1F26] border border-[#292D36] rounded cursor-pointer"
@@ -292,11 +351,11 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({
             </>
           )}
 
-          <div className="flex items-center gap-1.5 ml-1 pl-2 border-l border-[#262930]">
+          <div className="flex items-center gap-1 ml-1 pl-2 border-l border-[#262930]">
             <button
               type="button"
               onClick={fitTimelineToView}
-              title="Fit Sequence to Window"
+              title="Fit Whole Project to Window"
               aria-label="Fit Timeline"
               className="p-1 text-[#9CA3AF] hover:text-white cursor-pointer"
             >
@@ -317,7 +376,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({
               value={pixelsPerSecond}
               aria-label="Timeline Zoom"
               onChange={(e) => setPixelsPerSecond(Number(e.target.value))}
-              className="w-20 studio-slider"
+              className="w-16 studio-slider"
             />
             <button
               type="button"
@@ -333,7 +392,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({
 
       {/* Main Timeline Body */}
       <div className="flex-1 min-h-0 flex overflow-hidden">
-        {/* 1. Left Tool Strip (Readable mini-labels for easy discovery) */}
+        {/* 1. Left Tool Strip */}
         <div
           aria-label="Timeline Tools"
           className="w-12 shrink-0 bg-[#16171C] border-r border-[#24272E] py-1.5 flex flex-col items-center gap-1 overflow-y-auto"
@@ -375,7 +434,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({
               <button
                 type="button"
                 onClick={() => onAddTrack('video')}
-                title="Add Video Track"
+                title="Add New Video Track"
                 aria-label="Add Video Track"
                 className="flex items-center px-1 py-0.5 text-[9px] text-[#60A5FA] hover:bg-[#242934] rounded-xs cursor-pointer"
               >
@@ -384,7 +443,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({
               <button
                 type="button"
                 onClick={() => onAddTrack('audio')}
-                title="Add Audio Track"
+                title="Add New Audio Track"
                 aria-label="Add Audio Track"
                 className="flex items-center px-1 py-0.5 text-[9px] text-[#34D399] hover:bg-[#1E2E29] rounded-xs cursor-pointer"
               >
@@ -426,8 +485,8 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({
                     <button
                       type="button"
                       onClick={() => onToggleTrackProp(tr.id, 'visible')}
-                      aria-label={`Toggle ${tr.name} Visibility`}
-                      title="Toggle Track Output"
+                      aria-label={`Hide or Show ${tr.name}`}
+                      title="Show / Hide Track"
                       className={`p-1 rounded-xs cursor-pointer ${
                         tr.visible ? 'text-[#D1D5DB] hover:text-white' : 'text-[#4B5563]'
                       }`}
@@ -452,7 +511,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({
                     type="button"
                     onClick={() => onToggleTrackProp(tr.id, 'solo')}
                     aria-label={`Solo ${tr.name}`}
-                    title="Solo Track"
+                    title="Play Only This Track"
                     className={`px-1 py-0.5 text-[9px] font-bold rounded-xs cursor-pointer ${
                       tr.solo
                         ? 'bg-[#D97706] text-black'
@@ -470,14 +529,31 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({
         {/* 3. Scrollable Ruler & Track Lanes */}
         <div
           ref={lanesRef}
+          onPointerDown={(e) => {
+            if (activeTool === 'hand' && lanesRef.current) {
+              setDragState({
+                mode: 'pan',
+                startClientX: e.clientX,
+                origScrollLeft: lanesRef.current.scrollLeft,
+                origStartTime: 0,
+                origDuration: 0,
+                origTrackId: '',
+              });
+            }
+          }}
           className={`flex-1 min-w-0 overflow-auto relative bg-[#111215] ${
-            activeTool === 'razor' ? 'cursor-crosshair' : ''
+            activeTool === 'razor'
+              ? 'cursor-crosshair'
+              : activeTool === 'hand'
+              ? 'cursor-grab active:cursor-grabbing'
+              : ''
           }`}
         >
           <div style={{ width: timelineWidth }} className="relative min-h-full">
             {/* Timecode Ruler */}
             <div
               onPointerDown={(e) => {
+                e.stopPropagation();
                 e.currentTarget.setPointerCapture(e.pointerId);
                 const t = clientXToTime(e.clientX);
                 onSeek(t);
@@ -557,6 +633,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({
                       }
                     }}
                     onClick={(e) => {
+                      if (activeTool === 'hand') return;
                       if (e.target === e.currentTarget) {
                         onSeek(clientXToTime(e.clientX));
                       }
@@ -587,6 +664,7 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({
                           data-testid={`timeline-clip-${clip.id}`}
                           style={{ left: leftPx, width: widthPx }}
                           onPointerDown={(e) => {
+                            if (activeTool === 'hand') return;
                             e.stopPropagation();
                             if (activeTool === 'razor') {
                               const splitAt = clientXToTime(e.clientX);
@@ -700,12 +778,12 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({
           </div>
         </div>
 
-        {/* 4. Calibrated Stereo Master VU Meter */}
+        {/* 4. Calibrated Stereo Volume Meter */}
         <aside
-          aria-label="Master Audio Meters"
+          aria-label="Master Volume Meter"
           className="w-14 shrink-0 bg-[#15171B] border-l border-[#24272E] px-2 py-2 flex flex-col items-center justify-between"
         >
-          <span className="text-[9px] font-mono-tabular text-[#8E939E]">dBFS</span>
+          <span className="text-[9px] font-mono-tabular text-[#8E939E]">Level</span>
           <div className="flex-1 w-full flex items-stretch justify-center gap-1.5 my-1.5">
             {([
               { ch: 'L', db: stereoLevels.leftDb },
@@ -736,4 +814,4 @@ export const TimelinePanel: React.FC<TimelinePanelProps> = ({
       </div>
     </section>
   );
-};
+});

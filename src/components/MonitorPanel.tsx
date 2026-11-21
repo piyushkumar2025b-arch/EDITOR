@@ -4,6 +4,7 @@ import {
   ChevronLast,
   ChevronLeft,
   ChevronRight,
+  Clapperboard,
   Move,
   Pause,
   Play,
@@ -12,7 +13,13 @@ import {
   SplitSquareHorizontal,
 } from 'lucide-react';
 import { secondsToTimecode } from '../engine/timecode';
-import { ClipTransform, MediaAsset, SequenceSettings, TimelineClip } from '../engine/types';
+import {
+  ClipTransform,
+  MediaAsset,
+  SequenceAspectPreset,
+  SequenceSettings,
+  TimelineClip,
+} from '../engine/types';
 
 interface MonitorPanelProps {
   programCanvasRef: React.RefObject<HTMLCanvasElement | null>;
@@ -21,18 +28,22 @@ interface MonitorPanelProps {
   duration: number;
   isPlaying: boolean;
   isLooping: boolean;
+  playbackRate: number;
   sourceAsset: MediaAsset | null;
   selectedClip: TimelineClip | null;
   allowDualMonitor?: boolean;
   showDualMonitor: boolean;
   onToggleDualMonitor: () => void;
   onTogglePlay: () => void;
+  onChangePlaybackRate: (rate: number) => void;
   onStepFrame: (delta: number) => void;
   onSeek: (time: number) => void;
   onToggleLoop: () => void;
   onSetInPoint: () => void;
   onSetOutPoint: () => void;
   onInsertSourceAtPlayhead: () => void;
+  onChangeAspectRatio: (ratio: SequenceAspectPreset) => void;
+  onToggleCinemaBars: () => void;
   onUpdateClipTransform?: (clipId: string, patch: Partial<ClipTransform>) => void;
 }
 
@@ -43,18 +54,22 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
   duration,
   isPlaying,
   isLooping,
+  playbackRate,
   sourceAsset,
   selectedClip,
   allowDualMonitor = true,
   showDualMonitor,
   onToggleDualMonitor,
   onTogglePlay,
+  onChangePlaybackRate,
   onStepFrame,
   onSeek,
   onToggleLoop,
   onSetInPoint,
   onSetOutPoint,
   onInsertSourceAtPlayhead,
+  onChangeAspectRatio,
+  onToggleCinemaBars,
   onUpdateClipTransform,
 }) => {
   const [zoom, setZoom] = useState<'fit' | '50' | '100'>('fit');
@@ -70,6 +85,24 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
     Boolean(selectedClip) &&
     selectedClip?.kind !== 'audio' &&
     Boolean(onUpdateClipTransform);
+
+  const aspectValue: SequenceAspectPreset =
+    sequence.width === 1080 && sequence.height === 1920
+      ? '9:16'
+      : sequence.width === 1080 && sequence.height === 1080
+      ? '1:1'
+      : sequence.width === 1080 && sequence.height === 1350
+      ? '4:5'
+      : '16:9';
+
+  const canvasDims =
+    aspectValue === '9:16'
+      ? { w: 405, h: 720 }
+      : aspectValue === '1:1'
+      ? { w: 640, h: 640 }
+      : aspectValue === '4:5'
+      ? { w: 512, h: 640 }
+      : { w: 960, h: 540 };
 
   const handleCanvasPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!transformMode || !canDirectTransform || !selectedClip) return;
@@ -103,37 +136,37 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
 
   return (
     <section
-      aria-label="Program and Source Monitors"
+      aria-label="Video Preview and Clip Viewer"
       className="flex flex-col h-full bg-[#111214] min-w-0 overflow-hidden select-none"
     >
       {/* Monitor Header Bar */}
-      <div className="h-9 px-3 bg-[#16171B] border-b border-[#24272E] flex items-center justify-between gap-3 shrink-0">
-        <div className="flex items-center gap-3 min-w-0">
+      <div className="h-9 px-3 bg-[#16171B] border-b border-[#24272E] flex items-center justify-between gap-2 shrink-0">
+        <div className="flex items-center gap-2.5 min-w-0">
           <span className="text-[12px] font-semibold text-[#E5E7EB] whitespace-nowrap">
-            {showDualMonitor ? 'Source / Program Monitors' : 'Program Monitor'}
+            {showDualMonitor ? 'Clip & Video Preview' : 'Video Preview'}
           </span>
-          <span className="text-[11px] text-[#7D838F] truncate hidden sm:inline">
+          <span className="text-[11px] text-[#7D838F] truncate hidden xl:inline">
             {transformMode && canDirectTransform
-              ? `Drag on canvas to move "${selectedClip?.name}"`
+              ? `Drag on video to move "${selectedClip?.name}"`
               : sequence.name}
           </span>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
           {canDirectTransform && (
             <button
               type="button"
               onClick={() => setTransformMode((m) => !m)}
               aria-pressed={transformMode}
-              title="Toggle Direct On-Canvas Position & Scale"
-              className={`flex items-center gap-1.5 px-2 py-1 text-[11px] font-medium rounded border cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
+              title="Drag to Move & Resize Selected Clip on Screen"
+              className={`flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded border cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
                 transformMode
                   ? 'bg-[#3B82F6]/20 border-[#3B82F6] text-white'
                   : 'bg-[#1B1D23] border-[#292D36] text-[#9CA3AF] hover:text-white'
               }`}
             >
               <Move className="w-3 h-3" />
-              <span>Transform</span>
+              <span>Move & Resize</span>
             </button>
           )}
 
@@ -171,7 +204,7 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
                 onClick={() =>
                   onUpdateClipTransform(selectedClip.id, { x: 0, y: 0, scale: 100, rotation: 0 })
                 }
-                title="Reset Position & Scale"
+                title="Reset Position & Size"
                 aria-label="Reset Transform"
                 className="p-0.5 text-[#8E939E] hover:text-white cursor-pointer"
               >
@@ -180,25 +213,52 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
             </div>
           )}
 
+          <select
+            aria-label="Video Aspect Ratio"
+            value={aspectValue}
+            onChange={(e) => onChangeAspectRatio(e.target.value as SequenceAspectPreset)}
+            className="bg-[#1B1D23] border border-[#292D36] rounded px-2 py-1 text-[11px] text-[#D1D5DB] focus:outline-none focus:border-[#3B82F6] cursor-pointer"
+          >
+            <option value="16:9">16:9 Wide</option>
+            <option value="9:16">9:16 Reels</option>
+            <option value="1:1">1:1 Square</option>
+            <option value="4:5">4:5 Portrait</option>
+          </select>
+
+          <button
+            type="button"
+            onClick={onToggleCinemaBars}
+            aria-pressed={Boolean(sequence.cinemaBars)}
+            title="Toggle Widescreen Cinema Black Bars"
+            className={`hidden md:flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded border cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
+              sequence.cinemaBars
+                ? 'bg-[#252A34] border-[#3B82F6]/60 text-white'
+                : 'bg-[#1B1D23] border-[#292D36] text-[#9CA3AF] hover:text-white'
+            }`}
+          >
+            <Clapperboard className="w-3 h-3" />
+            <span>Cinema Bars</span>
+          </button>
+
           {allowDualMonitor && (
             <button
               type="button"
               onClick={onToggleDualMonitor}
               aria-pressed={showDualMonitor}
-              title="Toggle Source + Program Dual Monitor"
-              className={`flex items-center gap-1.5 px-2 py-1 text-[11px] font-medium rounded border cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
+              title="Show Original Clip Alongside Final Video"
+              className={`flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded border cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
                 showDualMonitor
                   ? 'bg-[#252A34] border-[#3B82F6]/60 text-white'
                   : 'bg-[#1B1D23] border-[#292D36] text-[#9CA3AF] hover:text-white'
               }`}
             >
               <SplitSquareHorizontal className="w-3 h-3" />
-              <span>Dual Monitor</span>
+              <span>Dual View</span>
             </button>
           )}
 
           <select
-            aria-label="Monitor Zoom"
+            aria-label="Preview Zoom"
             value={zoom}
             onChange={(e) => setZoom(e.target.value as 'fit' | '50' | '100')}
             className="bg-[#1B1D23] border border-[#292D36] rounded px-2 py-1 text-[11px] text-[#D1D5DB] focus:outline-none focus:border-[#3B82F6] cursor-pointer"
@@ -216,7 +276,7 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
           <div className="flex-1 h-full flex flex-col bg-[#121317] border border-[#24272E] rounded overflow-hidden min-w-0">
             <div className="h-7 px-2.5 bg-[#17191E] border-b border-[#24272E] flex items-center justify-between">
               <span className="text-[11px] font-medium text-[#9CA3AF] truncate">
-                Source: {sourceAsset ? sourceAsset.name : 'No Clip Loaded'}
+                Clip: {sourceAsset ? sourceAsset.name : 'None Selected'}
               </span>
               {sourceAsset && (
                 <button
@@ -224,7 +284,7 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
                   onClick={onInsertSourceAtPlayhead}
                   className="text-[10px] font-medium text-[#60A5FA] hover:text-white cursor-pointer whitespace-nowrap"
                 >
-                  + Insert at Playhead
+                  + Add to Timeline
                 </button>
               )}
             </div>
@@ -261,7 +321,7 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
                 )
               ) : (
                 <p className="text-[12px] text-[#6B7280]">
-                  Select an asset in Project Bin to inspect
+                  Click a file in Media Library to preview
                 </p>
               )}
             </div>
@@ -273,30 +333,36 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
           {showDualMonitor && (
             <div className="h-7 px-2.5 bg-[#17191E] border-b border-[#24272E] flex items-center justify-between">
               <span className="text-[11px] font-medium text-[#D1D5DB]">
-                Program: {sequence.name}
+                Final Video: {sequence.name}
               </span>
               <span className="text-[11px] font-mono-tabular text-[#3B82F6]">
                 {secondsToTimecode(currentTime, sequence.fps)}
               </span>
             </div>
           )}
-          <div className="flex-1 min-h-0 flex items-center justify-center p-2 bg-[#08090B] overflow-auto">
+          <div className="flex-1 min-h-0 flex items-center justify-center p-2 bg-[#0D0F13] overflow-auto">
             <canvas
               ref={programCanvasRef}
-              width={960}
-              height={540}
+              width={canvasDims.w}
+              height={canvasDims.h}
               data-testid="program-canvas"
               onPointerDown={handleCanvasPointerDown}
               onPointerMove={handleCanvasPointerMove}
               onPointerUp={handleCanvasPointerUp}
               style={
                 zoom === 'fit'
-                  ? { maxWidth: '100%', maxHeight: '100%', aspectRatio: '16 / 9' }
+                  ? {
+                      width: 'auto',
+                      height: 'auto',
+                      maxWidth: '100%',
+                      maxHeight: '100%',
+                      aspectRatio: `${sequence.width} / ${sequence.height}`,
+                    }
                   : zoom === '50'
-                  ? { width: '480px', height: '270px' }
-                  : { width: '960px', height: '540px' }
+                  ? { width: `${Math.round(canvasDims.w * 0.55)}px`, height: `${Math.round(canvasDims.h * 0.55)}px` }
+                  : { width: `${canvasDims.w}px`, height: `${canvasDims.h}px` }
               }
-              className={`block bg-black shadow-lg ${
+              className={`block bg-black border border-[#2F3542] shadow-2xl ${
                 transformMode && canDirectTransform
                   ? 'cursor-move ring-1 ring-[#3B82F6]'
                   : ''
@@ -307,12 +373,12 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
       </div>
 
       {/* Transport & Timecode Bar */}
-      <div className="h-11 px-4 bg-[#16171B] border-t border-[#24272E] flex items-center justify-between gap-4 shrink-0">
+      <div className="h-11 px-3 bg-[#16171B] border-t border-[#24272E] flex items-center justify-between gap-3 shrink-0">
         {/* Left: Live SMPTE Timecode */}
-        <div className="flex items-center gap-3 min-w-[160px]">
+        <div className="flex items-center gap-2 min-w-[140px]">
           <span
             data-testid="program-timecode"
-            className="text-[14px] font-semibold font-mono-tabular text-[#3B82F6] tracking-tight"
+            className="text-[13px] font-semibold font-mono-tabular text-[#3B82F6] tracking-tight"
           >
             {secondsToTimecode(currentTime, sequence.fps)}
           </span>
@@ -321,21 +387,21 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
           </span>
         </div>
 
-        {/* Center: NLE Transport Buttons */}
+        {/* Center: Clear Transport Buttons */}
         <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={onSetInPoint}
-            title="Mark In (I)"
-            aria-label="Mark In Point"
-            className="px-2 py-1 text-[11px] font-mono-tabular font-medium text-[#9CA3AF] hover:text-white hover:bg-[#24272F] rounded cursor-pointer"
+            title="Set Export Start Here (I)"
+            aria-label="Set Start Point"
+            className="px-2 py-1 text-[11px] font-medium text-[#9CA3AF] hover:text-white hover:bg-[#24272F] rounded cursor-pointer whitespace-nowrap"
           >
-            {'{ I'}
+            In
           </button>
           <button
             type="button"
             onClick={() => onSeek(0)}
-            title="Go to Start (Home)"
+            title="Jump to Start"
             aria-label="Go to Start"
             className="p-1.5 text-[#C7CBD4] hover:text-white hover:bg-[#24272F] rounded cursor-pointer"
           >
@@ -344,8 +410,8 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
           <button
             type="button"
             onClick={() => onStepFrame(-1)}
-            title="Step Back 1 Frame (Left Arrow)"
-            aria-label="Step Back 1 Frame"
+            title="Previous Frame (Left Arrow)"
+            aria-label="Previous Frame"
             className="p-1.5 text-[#C7CBD4] hover:text-white hover:bg-[#24272F] rounded cursor-pointer"
           >
             <ChevronLeft className="w-4 h-4" />
@@ -366,8 +432,8 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
           <button
             type="button"
             onClick={() => onStepFrame(1)}
-            title="Step Forward 1 Frame (Right Arrow)"
-            aria-label="Step Forward 1 Frame"
+            title="Next Frame (Right Arrow)"
+            aria-label="Next Frame"
             className="p-1.5 text-[#C7CBD4] hover:text-white hover:bg-[#24272F] rounded cursor-pointer"
           >
             <ChevronRight className="w-4 h-4" />
@@ -375,7 +441,7 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
           <button
             type="button"
             onClick={() => onSeek(duration)}
-            title="Go to End (End)"
+            title="Jump to End"
             aria-label="Go to End"
             className="p-1.5 text-[#C7CBD4] hover:text-white hover:bg-[#24272F] rounded cursor-pointer"
           >
@@ -384,23 +450,36 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({
           <button
             type="button"
             onClick={onSetOutPoint}
-            title="Mark Out (O)"
-            aria-label="Mark Out Point"
-            className="px-2 py-1 text-[11px] font-mono-tabular font-medium text-[#9CA3AF] hover:text-white hover:bg-[#24272F] rounded cursor-pointer"
+            title="Set Export End Here (O)"
+            aria-label="Set End Point"
+            className="px-2 py-1 text-[11px] font-medium text-[#9CA3AF] hover:text-white hover:bg-[#24272F] rounded cursor-pointer whitespace-nowrap"
           >
-            {'O }'}
+            Out
           </button>
         </div>
 
-        {/* Right: Loop Toggle */}
-        <div className="flex items-center justify-end min-w-[120px]">
+        {/* Right: Playback Speed + Loop */}
+        <div className="flex items-center justify-end gap-1.5 min-w-[140px]">
+          <select
+            aria-label="Playback Speed"
+            value={playbackRate}
+            onChange={(e) => onChangePlaybackRate(Number(e.target.value))}
+            title="Preview Playback Speed"
+            className="bg-[#1B1D23] border border-[#282B33] rounded px-1.5 py-1 text-[11px] font-mono-tabular text-[#D1D5DB] cursor-pointer"
+          >
+            <option value={0.5}>0.5x</option>
+            <option value={1}>1x</option>
+            <option value={1.5}>1.5x</option>
+            <option value={2}>2x</option>
+          </select>
+
           <button
             type="button"
             onClick={onToggleLoop}
             aria-pressed={isLooping}
             title="Loop Playback"
             aria-label="Loop Playback"
-            className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded border cursor-pointer transition-colors ${
+            className={`flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded border cursor-pointer transition-colors ${
               isLooping
                 ? 'bg-[#3B82F6]/15 border-[#3B82F6]/60 text-[#60A5FA]'
                 : 'bg-[#1B1D23] border-[#282B33] text-[#8E939E] hover:text-white'

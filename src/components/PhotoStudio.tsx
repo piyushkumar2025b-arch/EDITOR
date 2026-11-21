@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Crop,
+  Download,
   FlipHorizontal2,
   FlipVertical2,
   FolderPlus,
@@ -9,7 +10,10 @@ import {
 } from 'lucide-react';
 import {
   applyColorGradeToImageData,
+  DEFAULT_EFFECTS,
   isColorGradeIdentity,
+  isEffectsIdentity,
+  PHOTO_STYLE_PRESETS,
 } from '../engine/colorEngine';
 import { LoadedMediaCache } from '../engine/renderer';
 import { CropAspectPreset, MediaAsset, TimelineClip } from '../engine/types';
@@ -23,15 +27,16 @@ interface PhotoStudioProps {
   onSelectClip: (clipId: string) => void;
   onUpdateClip: (clipId: string, updater: (clip: TimelineClip) => TimelineClip) => void;
   onImportFiles: (files: FileList) => void;
+  onOpenExport: () => void;
 }
 
 const ASPECT_PRESETS: { id: CropAspectPreset; label: string; ratio: number | null }[] = [
   { id: 'original', label: 'Original', ratio: null },
-  { id: '16:9', label: '16:9 Cinema', ratio: 16 / 9 },
-  { id: '4:3', label: '4:3 Medium Format', ratio: 4 / 3 },
+  { id: '16:9', label: '16:9 Wide', ratio: 16 / 9 },
+  { id: '4:3', label: '4:3 Photo', ratio: 4 / 3 },
   { id: '1:1', label: '1:1 Square', ratio: 1 },
-  { id: '4:5', label: '4:5 Editorial', ratio: 4 / 5 },
-  { id: '9:16', label: '9:16 Vertical', ratio: 9 / 16 },
+  { id: '4:5', label: '4:5 Portrait', ratio: 4 / 5 },
+  { id: '9:16', label: '9:16 Story', ratio: 9 / 16 },
 ];
 
 export const PhotoStudio: React.FC<PhotoStudioProps> = ({
@@ -43,12 +48,17 @@ export const PhotoStudio: React.FC<PhotoStudioProps> = ({
   onSelectClip,
   onUpdateClip,
   onImportFiles,
+  onOpenExport,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const rgbRef = useRef<HTMLSpanElement>(null);
+  const gradedOffRef = useRef<HTMLCanvasElement | null>(null);
+  const untouchedOffRef = useRef<HTMLCanvasElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [compareSplit, setCompareSplit] = useState<number | null>(null);
   const [aspectPreset, setAspectPreset] = useState<CropAspectPreset>('original');
-  const [cursorRgb, setCursorRgb] = useState<{ r: number; g: number; b: number } | null>(null);
+  const [photoZoom, setPhotoZoom] = useState<'fit' | '100' | '150'>('fit');
 
   const photoClips = clips.filter((c) => c.kind === 'image' || c.kind === 'video');
   const activeClip =
@@ -57,19 +67,28 @@ export const PhotoStudio: React.FC<PhotoStudioProps> = ({
       : photoClips[0] ?? null;
   const activeAsset = assets.find((a) => a.id === activeClip?.assetId) ?? null;
 
+  // Step 1: Build cached graded + untouched buffers ONLY when clip styling/geometry changes
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !activeClip || !activeAsset) return;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return;
-
+    if (!activeClip || !activeAsset) return;
     const img = cache.images.get(activeAsset.id);
     if (!img || !img.complete || img.naturalWidth === 0) return;
 
-    const w = canvas.width;
-    const h = canvas.height;
-    ctx.fillStyle = '#0B0C0E';
-    ctx.fillRect(0, 0, w, h);
+    const w = 960;
+    const h = 600;
+
+    if (!untouchedOffRef.current) untouchedOffRef.current = document.createElement('canvas');
+    if (!gradedOffRef.current) gradedOffRef.current = document.createElement('canvas');
+
+    const uCanvas = untouchedOffRef.current;
+    const gCanvas = gradedOffRef.current;
+    uCanvas.width = w;
+    uCanvas.height = h;
+    gCanvas.width = w;
+    gCanvas.height = h;
+
+    const uCtx = uCanvas.getContext('2d', { willReadFrequently: true });
+    const gCtx = gCanvas.getContext('2d', { willReadFrequently: true });
+    if (!uCtx || !gCtx) return;
 
     const mediaAspect = img.naturalWidth / img.naturalHeight;
     const canvasAspect = w / h;
@@ -83,7 +102,46 @@ export const PhotoStudio: React.FC<PhotoStudioProps> = ({
       drawW = h * mediaAspect;
     }
 
-    const drawUntouched = (targetCtx: CanvasRenderingContext2D) => {
+    const rw = Math.max(2, Math.round(drawW));
+    const rh = Math.max(2, Math.round(drawH));
+
+    // Grade only the photo pixels (not the #0B0C0E background matte)
+    let gradedPhotoSource: CanvasImageSource = img;
+    const needsGrade =
+      !isColorGradeIdentity(activeClip.color) || !isEffectsIdentity(activeClip.effects);
+    if (needsGrade) {
+      const tmp = document.createElement('canvas');
+      tmp.width = rw;
+      tmp.height = rh;
+      const tCtx = tmp.getContext('2d', { willReadFrequently: true });
+      if (tCtx) {
+        const blurPx = activeClip.effects?.blur ?? 0;
+        if (blurPx > 0) tCtx.filter = `blur(${blurPx}px)`;
+        tCtx.drawImage(img, 0, 0, rw, rh);
+        tCtx.filter = 'none';
+        const imgData = tCtx.getImageData(0, 0, rw, rh);
+        applyColorGradeToImageData(imgData.data, activeClip.color, activeClip.effects);
+        tCtx.putImageData(imgData, 0, 0);
+
+        const glowAmt = activeClip.effects?.glow ?? 0;
+        if (glowAmt > 0) {
+          tCtx.save();
+          tCtx.globalCompositeOperation = 'screen';
+          tCtx.globalAlpha = Math.min(0.45, (glowAmt / 100) * 0.4);
+          tCtx.filter = `blur(${Math.round(8 + glowAmt * 0.14)}px)`;
+          tCtx.drawImage(tmp, 0, 0);
+          tCtx.restore();
+        }
+        gradedPhotoSource = tmp;
+      }
+    }
+
+    const drawTransformed = (
+      targetCtx: CanvasRenderingContext2D,
+      src: CanvasImageSource
+    ) => {
+      targetCtx.fillStyle = '#0B0C0E';
+      targetCtx.fillRect(0, 0, w, h);
       targetCtx.save();
       targetCtx.translate(w / 2, h / 2);
       targetCtx.rotate((activeClip.transform.rotation * Math.PI) / 180);
@@ -103,44 +161,64 @@ export const PhotoStudio: React.FC<PhotoStudioProps> = ({
         Math.max(1, drawH - cTop - cBottom)
       );
       targetCtx.clip();
-      targetCtx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
+      targetCtx.drawImage(src, -drawW / 2, -drawH / 2, drawW, drawH);
       targetCtx.restore();
     };
 
-    const off = document.createElement('canvas');
-    off.width = w;
-    off.height = h;
-    const offCtx = off.getContext('2d', { willReadFrequently: true });
-    if (!offCtx) return;
-    drawUntouched(offCtx);
+    drawTransformed(uCtx, img);
+    drawTransformed(gCtx, gradedPhotoSource);
 
-    if (!isColorGradeIdentity(activeClip.color)) {
-      const imgData = offCtx.getImageData(0, 0, w, h);
-      applyColorGradeToImageData(imgData.data, activeClip.color);
-      offCtx.putImageData(imgData, 0, 0);
-    }
+    // Draw instant composite after updating buffers
+    drawComposite(compareSplit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    activeClip?.id,
+    activeClip?.color,
+    activeClip?.effects,
+    activeClip?.transform,
+    activeAsset,
+    cache,
+    mediaRevision,
+  ]);
 
-    if (compareSplit !== null) {
-      const sx = Math.round(w * compareSplit);
+  // Step 2: Fast <1ms split wipe redraw when compareSplit changes
+  function drawComposite(splitFrac: number | null) {
+    const canvas = canvasRef.current;
+    const uCanvas = untouchedOffRef.current;
+    const gCanvas = gradedOffRef.current;
+    if (!canvas || !uCanvas || !gCanvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    if (splitFrac !== null) {
+      const sx = Math.round(w * splitFrac);
       ctx.save();
       ctx.beginPath();
       ctx.rect(0, 0, sx, h);
       ctx.clip();
-      drawUntouched(ctx);
+      ctx.drawImage(uCanvas, 0, 0);
       ctx.restore();
 
       ctx.save();
       ctx.beginPath();
       ctx.rect(sx, 0, w - sx, h);
       ctx.clip();
-      ctx.drawImage(off, 0, 0);
+      ctx.drawImage(gCanvas, 0, 0);
       ctx.restore();
 
       targetBadge(ctx, w, sx);
     } else {
-      ctx.drawImage(off, 0, 0);
+      ctx.drawImage(gCanvas, 0, 0);
     }
-  }, [activeClip, activeAsset, cache, compareSplit, mediaRevision]);
+  }
+
+  useEffect(() => {
+    drawComposite(compareSplit);
+  }, [compareSplit]);
 
   function targetBadge(ctx: CanvasRenderingContext2D, w: number, sx: number) {
     ctx.strokeStyle = '#E4E6EB';
@@ -150,7 +228,6 @@ export const PhotoStudio: React.FC<PhotoStudioProps> = ({
     ctx.lineTo(sx, ctx.canvas.height);
     ctx.stroke();
 
-    // Drag handle circle in center
     const cy = ctx.canvas.height / 2;
     ctx.fillStyle = '#181A20';
     ctx.strokeStyle = '#E4E6EB';
@@ -220,14 +297,14 @@ export const PhotoStudio: React.FC<PhotoStudioProps> = ({
 
   return (
     <section
-      aria-label="Photo Studio Develop Workspace"
+      aria-label="Photo Editor Workspace"
       className="flex flex-col h-full bg-[#111214] min-w-0 overflow-hidden select-none"
     >
-      {/* Photo Studio Toolbar */}
-      <div className="h-10 px-4 bg-[#16171B] border-b border-[#24272E] flex items-center justify-between gap-4 shrink-0">
-        <div className="flex items-center gap-2.5">
+      {/* Photo Editor Toolbar */}
+      <div className="h-10 px-3 bg-[#16171B] border-b border-[#24272E] flex items-center justify-between gap-2 shrink-0 overflow-x-auto">
+        <div className="flex items-center gap-2 shrink-0">
           <span className="text-[12px] font-semibold text-[#E5E7EB] whitespace-nowrap">
-            Photo Develop
+            Photo Editor
           </span>
           <button
             type="button"
@@ -251,7 +328,7 @@ export const PhotoStudio: React.FC<PhotoStudioProps> = ({
             }}
           />
 
-          <div className="flex items-center gap-1.5 border-l border-[#262930] pl-2.5">
+          <div className="flex items-center gap-1.5 border-l border-[#262930] pl-2">
             <Crop className="w-3.5 h-3.5 text-[#8E939E]" />
             <select
               aria-label="Crop Aspect Ratio"
@@ -295,7 +372,7 @@ export const PhotoStudio: React.FC<PhotoStudioProps> = ({
                   }))
                 }
                 aria-pressed={Boolean(activeClip.transform.flipH)}
-                title="Flip Horizontal"
+                title="Flip Left/Right"
                 aria-label="Flip Horizontal"
                 className={`p-1.5 rounded border cursor-pointer ${
                   activeClip.transform.flipH
@@ -314,7 +391,7 @@ export const PhotoStudio: React.FC<PhotoStudioProps> = ({
                   }))
                 }
                 aria-pressed={Boolean(activeClip.transform.flipV)}
-                title="Flip Vertical"
+                title="Flip Up/Down"
                 aria-label="Flip Vertical"
                 className={`p-1.5 rounded border cursor-pointer ${
                   activeClip.transform.flipV
@@ -324,16 +401,45 @@ export const PhotoStudio: React.FC<PhotoStudioProps> = ({
               >
                 <FlipVertical2 className="w-3 h-3" />
               </button>
+              <div className="hidden xl:flex items-center gap-1.5 pl-2 border-l border-[#262930]">
+                <span className="text-[10px] text-[#8E939E] whitespace-nowrap">Straighten</span>
+                <input
+                  type="range"
+                  min={-45}
+                  max={45}
+                  step={1}
+                  value={Math.max(-45, Math.min(45, activeClip.transform.rotation))}
+                  aria-label="Straighten Angle"
+                  onChange={(e) =>
+                    onUpdateClip(activeClip.id, (c) => ({
+                      ...c,
+                      transform: { ...c.transform, rotation: Number(e.target.value) },
+                    }))
+                  }
+                  className="w-16 studio-slider"
+                />
+              </div>
             </div>
           )}
         </div>
 
-        <div className="flex items-center gap-3 shrink-0">
-          {cursorRgb && (
-            <span className="text-[11px] font-mono-tabular text-[#9CA3AF] whitespace-nowrap">
-              R {cursorRgb.r} · G {cursorRgb.g} · B {cursorRgb.b}
-            </span>
-          )}
+        <div className="flex items-center gap-2 shrink-0">
+          <span
+            ref={rgbRef}
+            className="hidden xl:inline text-[11px] font-mono-tabular text-[#9CA3AF] whitespace-nowrap min-w-[110px] text-right"
+          >
+            Hover for RGB
+          </span>
+          <select
+            aria-label="Photo Zoom"
+            value={photoZoom}
+            onChange={(e) => setPhotoZoom(e.target.value as 'fit' | '100' | '150')}
+            className="bg-[#1C1E24] border border-[#2A2D36] rounded px-2 py-1 text-[11px] text-[#E5E7EB] cursor-pointer"
+          >
+            <option value="fit">Fit</option>
+            <option value="100">100%</option>
+            <option value="150">150%</option>
+          </select>
           <button
             type="button"
             onClick={() => setCompareSplit((v) => (v === null ? 0.5 : null))}
@@ -345,13 +451,21 @@ export const PhotoStudio: React.FC<PhotoStudioProps> = ({
             }`}
           >
             <SplitSquareHorizontal className="w-3.5 h-3.5" />
-            <span>Before / After Split</span>
+            <span>Compare Before / After</span>
+          </button>
+          <button
+            type="button"
+            onClick={onOpenExport}
+            className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-[#E5E7EB] bg-[#20232B] hover:bg-[#2A2E38] border border-[#2F3440] rounded cursor-pointer whitespace-nowrap"
+          >
+            <Download className="w-3 h-3" />
+            <span>Save Photo</span>
           </button>
         </div>
       </div>
 
       {/* Main Canvas Stage */}
-      <div className="flex-1 min-h-0 flex items-center justify-center p-4 bg-[#0B0C0E] relative overflow-hidden">
+      <div className="flex-1 min-h-0 flex items-center justify-center p-4 bg-[#0B0C0E] relative overflow-auto">
         <canvas
           ref={canvasRef}
           width={960}
@@ -361,59 +475,89 @@ export const PhotoStudio: React.FC<PhotoStudioProps> = ({
             const canvas = canvasRef.current;
             if (!canvas) return;
             const rect = canvas.getBoundingClientRect();
+            const fracX = Math.max(0.05, Math.min(0.95, (e.clientX - rect.left) / rect.width));
             if (compareSplit !== null && e.buttons === 1) {
-              const frac = Math.max(0.05, Math.min(0.95, (e.clientX - rect.left) / rect.width));
-              setCompareSplit(frac);
+              setCompareSplit(fracX);
             }
             const ctx = canvas.getContext('2d');
-            if (ctx) {
-              const px = Math.floor(((e.clientX - rect.left) / rect.width) * canvas.width);
-              const py = Math.floor(((e.clientY - rect.top) / rect.height) * canvas.height);
-              if (px >= 0 && py >= 0 && px < canvas.width && py < canvas.height) {
-                const pixel = ctx.getImageData(px, py, 1, 1).data;
-                setCursorRgb({ r: pixel[0], g: pixel[1], b: pixel[2] });
-              }
+            if (ctx && rgbRef.current) {
+              const px = Math.min(canvas.width - 1, Math.max(0, Math.floor(fracX * canvas.width)));
+              const py = Math.min(
+                canvas.height - 1,
+                Math.max(0, Math.floor(((e.clientY - rect.top) / rect.height) * canvas.height))
+              );
+              const d = ctx.getImageData(px, py, 1, 1).data;
+              rgbRef.current.textContent = `R ${d[0]} · G ${d[1]} · B ${d[2]}`;
             }
           }}
-          onPointerDown={(e) => {
-            if (compareSplit === null || !canvasRef.current) return;
-            const rect = canvasRef.current.getBoundingClientRect();
-            const frac = Math.max(0.05, Math.min(0.95, (e.clientX - rect.left) / rect.width));
-            setCompareSplit(frac);
+          onPointerLeave={() => {
+            if (rgbRef.current) rgbRef.current.textContent = 'Hover for RGB';
           }}
-          className="max-w-full max-h-full object-contain shadow-xl cursor-crosshair"
+          style={
+            photoZoom === 'fit'
+              ? { maxWidth: '100%', maxHeight: '100%', aspectRatio: '16 / 10' }
+              : photoZoom === '100'
+              ? { width: '960px', height: '600px' }
+              : { width: '1440px', height: '900px' }
+          }
+          className={`block bg-black shadow-2xl ${
+            compareSplit !== null ? 'cursor-ew-resize' : 'cursor-crosshair'
+          }`}
         />
       </div>
 
-      {/* Filmstrip Selector */}
-      <div className="h-24 px-4 bg-[#15161A] border-t border-[#24272E] flex items-center gap-3 overflow-x-auto shrink-0">
-        {photoClips.map((clip) => {
-          const asset = assets.find((a) => a.id === clip.assetId);
-          const isSelected = activeClip?.id === clip.id;
+      {/* Quick One-Click Photo Styles */}
+      {activeClip && (
+        <div className="px-4 py-1.5 bg-[#15161B] border-t border-[#24272E] flex items-center gap-2 overflow-x-auto shrink-0">
+          <span className="text-[11px] font-medium text-[#8E939E] whitespace-nowrap shrink-0">
+            Quick Styles:
+          </span>
+          {PHOTO_STYLE_PRESETS.map((style) => (
+            <button
+              key={style.id}
+              type="button"
+              onClick={() =>
+                onUpdateClip(activeClip.id, (c) => ({
+                  ...c,
+                  color: style.buildGrade(),
+                  effects: { ...(c.effects ?? DEFAULT_EFFECTS), ...(style.effects ?? {}) },
+                }))
+              }
+              className="px-2.5 py-1 text-[11px] font-medium text-[#D1D5DB] hover:text-white bg-[#1D2027] hover:bg-[#282D38] border border-[#2A2E38] rounded cursor-pointer whitespace-nowrap shrink-0"
+            >
+              {style.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Photo Filmstrip Selector */}
+      <div className="h-22 px-4 py-2 bg-[#141519] border-t border-[#24272E] flex items-center gap-2.5 overflow-x-auto shrink-0">
+        {photoClips.map((c) => {
+          const asset = assets.find((a) => a.id === c.assetId);
+          const isActive = activeClip?.id === c.id;
           return (
             <button
-              key={clip.id}
+              key={c.id}
               type="button"
-              onClick={() => onSelectClip(clip.id)}
-              className={`shrink-0 w-32 rounded border overflow-hidden text-left transition-colors cursor-pointer ${
-                isSelected
-                  ? 'border-[#3B82F6] ring-1 ring-[#3B82F6]'
-                  : 'border-[#272A32] hover:border-[#424856]'
+              onClick={() => onSelectClip(c.id)}
+              className={`h-full aspect-video rounded border overflow-hidden relative shrink-0 cursor-pointer transition-colors ${
+                isActive
+                  ? 'border-[#3B82F6] ring-1 ring-[#3B82F6]/50'
+                  : 'border-[#2A2D36] hover:border-[#4B5563]'
               }`}
             >
-              <div className="h-14 bg-[#0D0E10] overflow-hidden">
-                {asset?.src && (
-                  <img
-                    src={asset.src}
-                    alt={clip.name}
-                    referrerPolicy="no-referrer"
-                    className="w-full h-full object-cover"
-                  />
-                )}
-              </div>
-              <div className="px-1.5 py-1 bg-[#1B1D23] text-[10px] text-[#D1D5DB] truncate">
-                {clip.name}
-              </div>
+              {asset?.src && (
+                <img
+                  src={asset.src}
+                  alt={c.name}
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover"
+                />
+              )}
+              <span className="absolute inset-x-0 bottom-0 px-1.5 py-0.5 bg-black/75 text-[10px] text-[#E5E7EB] truncate text-left">
+                {c.name}
+              </span>
             </button>
           );
         })}

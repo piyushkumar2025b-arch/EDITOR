@@ -4,6 +4,7 @@ import {
   Grid,
   HelpCircle,
   Redo2,
+  RotateCcw,
   Scan,
   Undo2,
   X,
@@ -22,25 +23,26 @@ interface TopBarProps {
   onToggleSafeGuides: () => void;
   showGrid: boolean;
   onToggleGrid: () => void;
+  onResetProject: () => void;
   onOpenExport: () => void;
 }
 
 const WORKSPACES: { id: WorkspaceMode; label: string }[] = [
-  { id: 'editing', label: 'Editing' },
-  { id: 'color', label: 'Color' },
-  { id: 'photo', label: 'Photo Studio' },
-  { id: 'audio', label: 'Audio' },
+  { id: 'editing', label: 'Video Editor' },
+  { id: 'color', label: 'Color Lab' },
+  { id: 'photo', label: 'Photo Editor' },
+  { id: 'audio', label: 'Audio Mixer' },
 ];
 
 const SHORTCUTS: { keys: string; action: string }[] = [
   { keys: 'Space', action: 'Play / Pause' },
   { keys: 'J / K / L', action: 'Reverse / Stop / Fast Forward' },
   { keys: '← / →', action: 'Step Back / Forward 1 Frame' },
-  { keys: 'V / C / B', action: 'Select / Razor Split / Trim Tool' },
-  { keys: 'S', action: 'Toggle Timeline Snapping' },
-  { keys: 'I / O', action: 'Set In / Out Range Points' },
-  { keys: 'M', action: 'Add Timeline Marker' },
-  { keys: 'Del / Shift+Del', action: 'Delete / Ripple Delete' },
+  { keys: 'V / C / B', action: 'Select / Cut / Trim Tool' },
+  { keys: 'S', action: 'Toggle Magnet Snap' },
+  { keys: 'I / O', action: 'Set Start / End Export Range' },
+  { keys: 'M', action: 'Add Timeline Bookmark' },
+  { keys: 'Del / Shift+Del', action: 'Delete / Delete & Close Gap' },
   { keys: 'Ctrl+Z / Shift+Z', action: 'Undo / Redo' },
   { keys: 'Double-Click Label', action: 'Reset Slider' },
 ];
@@ -57,6 +59,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onToggleSafeGuides,
   showGrid,
   onToggleGrid,
+  onResetProject,
   onOpenExport,
 }) => {
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -70,7 +73,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         </span>
         <span className="h-3.5 w-px bg-[#2A2D35]" aria-hidden="true" />
         <div className="hidden lg:flex items-center gap-2 text-[12px] text-[#8E939E] whitespace-nowrap">
-          <span className="text-[#C7CBD4] font-medium truncate max-w-[180px]">
+          <span className="text-[#C7CBD4] font-medium truncate max-w-[160px]">
             {sequence.name}
           </span>
           <span aria-hidden="true">·</span>
@@ -136,8 +139,8 @@ export const TopBar: React.FC<TopBarProps> = ({
             type="button"
             onClick={onToggleSafeGuides}
             aria-pressed={showSafeGuides}
-            aria-label="Toggle Safe Margins"
-            title="Toggle Action & Title Safe Margins"
+            aria-label="Toggle Safe Frame"
+            title="Safe Frame Guides"
             className={`p-1.5 transition-colors cursor-pointer ${
               showSafeGuides ? 'text-[#3B82F6] bg-[#3B82F6]/12' : 'text-[#9CA3AF] hover:text-white'
             }`}
@@ -150,7 +153,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             onClick={onToggleGrid}
             aria-pressed={showGrid}
             aria-label="Toggle Rule of Thirds Grid"
-            title="Toggle Rule of Thirds Grid"
+            title="Grid Lines"
             className={`p-1.5 transition-colors cursor-pointer ${
               showGrid ? 'text-[#3B82F6] bg-[#3B82F6]/12' : 'text-[#9CA3AF] hover:text-white'
             }`}
@@ -164,7 +167,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           onClick={() => setShowShortcuts((s) => !s)}
           aria-expanded={showShortcuts}
           aria-label="Keyboard Shortcuts"
-          title="Keyboard Shortcuts"
+          title="Keyboard Shortcuts & Project Reset"
           className={`p-1.5 rounded border transition-colors cursor-pointer ${
             showShortcuts
               ? 'bg-[#262A34] border-[#3B82F6]/60 text-white'
@@ -180,7 +183,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           className="flex items-center gap-1.5 px-3.5 py-1.5 bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-[12px] font-medium rounded transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-white"
         >
           <Download className="w-3.5 h-3.5" />
-          <span>Export Media</span>
+          <span>Save / Export</span>
         </button>
       </div>
 
@@ -214,6 +217,20 @@ export const TopBar: React.FC<TopBarProps> = ({
                 </span>
               </div>
             ))}
+          </div>
+          <div className="mt-3 pt-2.5 border-t border-[#252830] flex items-center justify-between">
+            <span className="text-[11px] text-[#8E939E]">Start fresh</span>
+            <button
+              type="button"
+              onClick={() => {
+                onResetProject();
+                setShowShortcuts(false);
+              }}
+              className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-[#FCA5A5] hover:text-white bg-[#1F222A] hover:bg-[#DC2626]/25 border border-[#2C303A] rounded cursor-pointer"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>Reset Project</span>
+            </button>
           </div>
         </div>
       )}

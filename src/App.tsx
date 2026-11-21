@@ -13,26 +13,41 @@ import {
   extractAudioPeaksFromBuffer,
   generateSynthWaveform,
 } from './engine/audioSynth';
-import { createDefaultColorGrade, DEFAULT_TRANSFORM } from './engine/colorEngine';
-import { LoadedMediaCache, renderCompositeFrame } from './engine/renderer';
+import {
+  computeAutoBalanceGrade,
+  createDefaultColorGrade,
+  DEFAULT_EFFECTS,
+  DEFAULT_TRANSFORM,
+} from './engine/colorEngine';
+import {
+  computeScopesFromCanvas,
+  LoadedMediaCache,
+  renderCompositeFrame,
+} from './engine/renderer';
 import { createSeedProject } from './engine/seedProject';
 import { stepFrames } from './engine/timecode';
 import {
   addTrack,
   changeClipSpeed,
+  closeTrackGaps,
   deleteClip,
   duplicateClip,
+  getSequenceDimensionsForRatio,
   getSequenceDuration,
   moveClip,
+  splitAllAtTime,
   splitClipAtTime,
   trimClip,
+  trimClipToPlayhead,
 } from './engine/timelineOps';
 import {
+  AudioTonePreset,
   ClipTransform,
   ColorGrade,
   MediaAsset,
   ProjectState,
   ScopeData,
+  SequenceAspectPreset,
   TimelineClip,
   ToolMode,
   WorkspaceMode,
@@ -44,6 +59,7 @@ export default function App() {
   const [future, setFuture] = useState<ProjectState[]>([]);
 
   const [workspace, setWorkspace] = useState<WorkspaceMode>('editing');
+  const [inspectorTab, setInspectorTab] = useState<'effects' | 'color' | 'text' | 'scopes'>('color');
   const [activeTool, setActiveTool] = useState<ToolMode>('select');
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [showSafeGuides, setShowSafeGuides] = useState(false);
@@ -83,7 +99,6 @@ export default function App() {
     [project.assets, selectedAssetId]
   );
 
-  // History helper for undoable project mutations
   const commitProject = useCallback((updater: (prev: ProjectState) => ProjectState) => {
     setProject((prev) => {
       const next = updater(prev);
@@ -118,6 +133,17 @@ export default function App() {
     });
   }, []);
 
+  const handleResetProject = useCallback(() => {
+    setIsPlaying(false);
+    setPast([]);
+    setFuture([]);
+    const seed = createSeedProject();
+    setProject(seed);
+    setCurrentTime(0.5);
+    setSelectedClipId('clip_1');
+    setSelectedAssetId('asset_street');
+  }, []);
+
   // Preload images and videos into cache
   useEffect(() => {
     const cache = mediaCacheRef.current;
@@ -148,7 +174,10 @@ export default function App() {
       if (currentTime >= clip.startTime && currentTime < clip.startTime + clip.duration) {
         const vid = cache.videos.get(clip.assetId);
         if (vid && vid.readyState >= 1) {
-          const targetVidTime = clip.sourceIn + (currentTime - clip.startTime) * clip.speed;
+          const rawRel = (currentTime - clip.startTime) * clip.speed;
+          const targetVidTime = clip.reversed
+            ? Math.max(0, clip.sourceIn + clip.duration * clip.speed - rawRel)
+            : clip.sourceIn + rawRel;
           if (Math.abs(vid.currentTime - targetVidTime) > 0.08) {
             vid.currentTime = Math.max(0, targetVidTime);
           }
@@ -157,7 +186,10 @@ export default function App() {
     }
   }, [currentTime, project.clips]);
 
-  // Render composite frame whenever playhead, project, guides, or loaded images change
+  // Only compute live scopes when Color Lab or Scopes tab is active (eliminates wasted GPU readback)
+  const needsLiveScopes = workspace === 'color' || inspectorTab === 'scopes';
+
+  // Render composite frame
   useEffect(() => {
     const canvas = programCanvasRef.current;
     if (!canvas) return;
@@ -172,13 +204,22 @@ export default function App() {
       {
         showSafeGuides,
         showGrid,
-        computeScopes: true,
+        computeScopes: needsLiveScopes,
       }
     );
     if (computed) setScopes(computed);
-  }, [project, currentTime, showSafeGuides, showGrid, mediaRevision, workspace, showDualMonitor]);
+  }, [
+    project,
+    currentTime,
+    showSafeGuides,
+    showGrid,
+    mediaRevision,
+    workspace,
+    showDualMonitor,
+    needsLiveScopes,
+  ]);
 
-  // Playback loop via requestAnimationFrame
+  // Playback loop via requestAnimationFrame (~30fps React state sync for smooth timeline + 60fps canvas)
   useEffect(() => {
     if (!isPlaying) return;
     let rafId = 0;
@@ -228,6 +269,24 @@ export default function App() {
     []
   );
 
+  const handleAutoBalanceClip = useCallback(
+    (clipId: string) => {
+      const freshScopes =
+        scopes ??
+        (programCanvasRef.current ? computeScopesFromCanvas(programCanvasRef.current) : null);
+      if (freshScopes) setScopes(freshScopes);
+      commitProject((prev) => ({
+        ...prev,
+        clips: prev.clips.map((c) =>
+          c.id === clipId
+            ? { ...c, color: computeAutoBalanceGrade(freshScopes, c.color) }
+            : c
+        ),
+      }));
+    },
+    [commitProject, scopes]
+  );
+
   const handleMoveClip = useCallback(
     (clipId: string, newStartTime: number, newTrackId: string) => {
       setProject((prev) => ({
@@ -248,6 +307,16 @@ export default function App() {
     []
   );
 
+  const handleTrimClipToPlayhead = useCallback(
+    (clipId: string, edge: 'left' | 'right') => {
+      commitProject((prev) => ({
+        ...prev,
+        clips: trimClipToPlayhead(prev.clips, clipId, edge, currentTime),
+      }));
+    },
+    [commitProject, currentTime]
+  );
+
   const handleSplitClip = useCallback(
     (clipId: string, splitTime: number) => {
       commitProject((prev) => ({
@@ -257,6 +326,13 @@ export default function App() {
     },
     [commitProject]
   );
+
+  const handleSplitAllAtPlayhead = useCallback(() => {
+    commitProject((prev) => ({
+      ...prev,
+      clips: splitAllAtTime(prev.clips, prev.tracks, currentTime),
+    }));
+  }, [commitProject, currentTime]);
 
   const handleDeleteClip = useCallback(
     (clipId: string, ripple: boolean) => {
@@ -269,12 +345,46 @@ export default function App() {
     [commitProject, selectedClipId]
   );
 
+  const handleCloseTrackGaps = useCallback(
+    (trackId: string) => {
+      commitProject((prev) => ({
+        ...prev,
+        clips: closeTrackGaps(prev.clips, trackId),
+      }));
+    },
+    [commitProject]
+  );
+
   const handleDuplicateClip = useCallback(
     (clipId: string) => {
       commitProject((prev) => ({
         ...prev,
         clips: duplicateClip(prev.clips, clipId),
       }));
+    },
+    [commitProject]
+  );
+
+  const handleFreezeClip = useCallback(
+    (clipId: string) => {
+      commitProject((prev) => {
+        const target = prev.clips.find((c) => c.id === clipId);
+        if (!target) return prev;
+        const freezeClip: TimelineClip = {
+          ...structuredClone(target),
+          id: `${target.id}_freeze_${Math.random().toString(36).slice(2, 6)}`,
+          name: `${target.name} (Freeze)`,
+          startTime: Number((target.startTime + target.duration).toFixed(3)),
+          duration: 3.0,
+          speed: 1,
+          transform: {
+            ...target.transform,
+            kenBurnsZoom: 0,
+            motionPreset: 'none',
+          },
+        };
+        return { ...prev, clips: [...prev.clips, freezeClip] };
+      });
     },
     [commitProject]
   );
@@ -296,6 +406,7 @@ export default function App() {
         fadeOut: 0.2,
         gainDb: 0,
         transform: { ...DEFAULT_TRANSFORM },
+        effects: { ...DEFAULT_EFFECTS },
         color: createDefaultColorGrade(),
       };
       commitProject((prev) => ({
@@ -307,41 +418,77 @@ export default function App() {
     [commitProject, currentTime]
   );
 
-  const handleAddTitleClip = useCallback(() => {
+  const handleAddTitleClip = useCallback(
+    (preset: 'hero' | 'lower-third' | 'caption' = 'hero') => {
+      const isCaption = preset === 'caption';
+      const isLower = preset === 'lower-third';
+      const newClip: TimelineClip = {
+        id: `title_${Date.now().toString(36)}`,
+        assetId: 'title_gen',
+        trackId: 'v3',
+        name: isCaption ? 'Subtitle Caption' : isLower ? 'Lower Third' : 'Heading Title',
+        kind: 'title',
+        startTime: Number(currentTime.toFixed(3)),
+        duration: 4.0,
+        sourceIn: 0,
+        speed: 1,
+        fadeIn: 0.25,
+        fadeOut: 0.25,
+        gainDb: 0,
+        transform: { ...DEFAULT_TRANSFORM },
+        effects: { ...DEFAULT_EFFECTS },
+        color: createDefaultColorGrade(),
+        textOverlay: {
+          text: isCaption ? 'Tap to edit caption line here' : 'CHAPTER ONE',
+          subtitle: isCaption ? '' : 'CREATIVE STUDIO · 2026',
+          fontSize: isCaption ? 28 : 38,
+          fontWeight: 700,
+          fontFamily: 'sans',
+          color: '#F3F4F6',
+          backgroundColor: '#111214',
+          backgroundOpacity: 78,
+          align: 'center',
+          letterSpacing: 0.05,
+          lowerThird: isLower,
+          textShadow: true,
+          stylePreset: preset,
+        },
+      };
+      commitProject((prev) => ({
+        ...prev,
+        clips: [...prev.clips, newClip],
+      }));
+      setSelectedClipId(newClip.id);
+      setInspectorTab('text');
+      setActiveTool('select');
+    },
+    [commitProject, currentTime]
+  );
+
+  const handleAddSynthAudioClip = useCallback(() => {
     const newClip: TimelineClip = {
-      id: `title_${Date.now().toString(36)}`,
-      assetId: 'title_gen',
-      trackId: 'v3',
-      name: 'Title Overlay',
-      kind: 'title',
+      id: `audio_${Date.now().toString(36)}`,
+      assetId: 'asset_score',
+      trackId: 'a2',
+      name: 'Ambient Music Bed',
+      kind: 'audio',
       startTime: Number(currentTime.toFixed(3)),
-      duration: 4.0,
+      duration: 6.0,
       sourceIn: 0,
       speed: 1,
-      fadeIn: 0.25,
-      fadeOut: 0.25,
-      gainDb: 0,
+      fadeIn: 0.4,
+      fadeOut: 0.6,
+      gainDb: -4,
+      audioTone: 'normal',
       transform: { ...DEFAULT_TRANSFORM },
+      effects: { ...DEFAULT_EFFECTS },
       color: createDefaultColorGrade(),
-      textOverlay: {
-        text: 'CHAPTER ONE',
-        subtitle: 'DIRECTOR CUT · 2026',
-        fontSize: 38,
-        fontWeight: 700,
-        color: '#F3F4F6',
-        backgroundColor: '#111214',
-        backgroundOpacity: 75,
-        align: 'center',
-        letterSpacing: 0.05,
-        lowerThird: false,
-      },
     };
     commitProject((prev) => ({
       ...prev,
       clips: [...prev.clips, newClip],
     }));
     setSelectedClipId(newClip.id);
-    setActiveTool('select');
   }, [commitProject, currentTime]);
 
   const handleImportFiles = useCallback(async (files: FileList) => {
@@ -381,7 +528,7 @@ export default function App() {
             width: vid.videoWidth || 1920,
             height: vid.videoHeight || 1080,
             fps: 24,
-            codec: 'H.264 / MP4',
+            codec: 'Video',
             createdAt: new Date().toISOString().slice(0, 10),
           };
           setProject((prev) => ({ ...prev, assets: [asset, ...prev.assets] }));
@@ -410,7 +557,7 @@ export default function App() {
           width: 0,
           height: 0,
           fps: 24,
-          codec: 'PCM / Audio',
+          codec: 'Audio',
           sampleRate,
           waveformPeaks: peaks,
           createdAt: new Date().toISOString().slice(0, 10),
@@ -441,12 +588,23 @@ export default function App() {
         {
           id: `mk_${Date.now()}`,
           time: Number(currentTime.toFixed(3)),
-          label: `Cue ${prev.markers.length + 1}`,
+          label: `Bookmark ${prev.markers.length + 1}`,
           color: 'emerald',
         },
       ],
     }));
   }, [commitProject, currentTime]);
+
+  const handleChangeAspectRatio = useCallback(
+    (ratio: SequenceAspectPreset) => {
+      const dims = getSequenceDimensionsForRatio(ratio);
+      commitProject((prev) => ({
+        ...prev,
+        sequence: { ...prev.sequence, width: dims.width, height: dims.height },
+      }));
+    },
+    [commitProject]
+  );
 
   // Global NLE Keyboard Shortcuts
   useEffect(() => {
@@ -495,6 +653,8 @@ export default function App() {
         setActiveTool('razor');
       } else if (e.key.toLowerCase() === 'b') {
         setActiveTool('trim');
+      } else if (e.key.toLowerCase() === 'h') {
+        setActiveTool('hand');
       } else if (e.key.toLowerCase() === 's') {
         setSnapEnabled((s) => !s);
       } else if (e.key.toLowerCase() === 'm') {
@@ -535,7 +695,10 @@ export default function App() {
     >
       <TopBar
         workspace={workspace}
-        onWorkspaceChange={setWorkspace}
+        onWorkspaceChange={(ws) => {
+          setWorkspace(ws);
+          if (ws === 'color' || ws === 'photo') setInspectorTab('color');
+        }}
         sequence={project.sequence}
         canUndo={past.length > 0}
         canRedo={future.length > 0}
@@ -545,6 +708,7 @@ export default function App() {
         onToggleSafeGuides={() => setShowSafeGuides((v) => !v)}
         showGrid={showGrid}
         onToggleGrid={() => setShowGrid((v) => !v)}
+        onResetProject={handleResetProject}
         onOpenExport={() => setIsExportOpen(true)}
       />
 
@@ -562,6 +726,7 @@ export default function App() {
               }}
               onInsertAssetToTimeline={handleInsertAssetToTimeline}
               onAddTitleClip={handleAddTitleClip}
+              onAddSynthAudioClip={handleAddSynthAudioClip}
               onImportFiles={handleImportFiles}
             />
           </div>
@@ -571,7 +736,7 @@ export default function App() {
           <div className="w-[316px] shrink-0 h-full bg-[#15161A] border-r border-[#262930] p-2.5 space-y-2.5 overflow-y-auto">
             <ScopesPanel scopes={scopes} />
             <div className="p-2.5 bg-[#121317] border border-[#24272E] rounded space-y-1.5">
-              <div className="text-[11px] font-semibold text-[#D1D5DB]">Sequence Clips</div>
+              <div className="text-[11px] font-semibold text-[#D1D5DB]">Project Clips</div>
               <div className="space-y-1">
                 {project.clips
                   .filter((c) => c.kind === 'image' || c.kind === 'video')
@@ -591,7 +756,7 @@ export default function App() {
                     >
                       <span className="truncate">{c.name}</span>
                       <span className="font-mono-tabular text-[10px] opacity-70">
-                        {c.color.lut === 'none' ? 'Neutral' : c.color.lut}
+                        {c.color.lut === 'none' ? 'Original' : c.color.lut}
                       </span>
                     </button>
                   ))}
@@ -601,7 +766,7 @@ export default function App() {
         )}
 
         {workspace === 'audio' && (
-          <div className="w-[380px] shrink-0 h-full overflow-hidden">
+          <div className="w-[410px] shrink-0 h-full overflow-hidden">
             <AudioMixerPanel
               tracks={project.tracks}
               stereoLevels={stereoLevels}
@@ -613,12 +778,28 @@ export default function App() {
                   ),
                 }))
               }
+              onChangeTrackPan={(trackId, pan) =>
+                setProject((prev) => ({
+                  ...prev,
+                  tracks: prev.tracks.map((t) =>
+                    t.id === trackId ? { ...t, pan } : t
+                  ),
+                }))
+              }
+              onChangeTrackTone={(trackId, tonePreset: AudioTonePreset) =>
+                setProject((prev) => ({
+                  ...prev,
+                  tracks: prev.tracks.map((t) =>
+                    t.id === trackId ? { ...t, tonePreset } : t
+                  ),
+                }))
+              }
               onToggleTrackProp={(trackId, prop) => handleToggleTrackProp(trackId, prop)}
             />
           </div>
         )}
 
-        {/* Center Stage: Either Photo Studio OR Video/Program Monitor */}
+        {/* Center Stage: Either Photo Editor OR Video Preview */}
         <div className="flex-1 min-w-0 h-full overflow-hidden">
           {workspace === 'photo' ? (
             <PhotoStudio
@@ -630,6 +811,7 @@ export default function App() {
               onSelectClip={(id) => setSelectedClipId(id)}
               onUpdateClip={handleUpdateClip}
               onImportFiles={handleImportFiles}
+              onOpenExport={() => setIsExportOpen(true)}
             />
           ) : (
             <MonitorPanel
@@ -639,15 +821,14 @@ export default function App() {
               duration={sequenceDuration}
               isPlaying={isPlaying}
               isLooping={isLooping}
+              playbackRate={playbackRate}
               sourceAsset={sourceAsset}
               selectedClip={selectedClip}
               allowDualMonitor={workspace === 'editing'}
               showDualMonitor={showDualMonitor && workspace === 'editing'}
               onToggleDualMonitor={() => setShowDualMonitor((d) => !d)}
-              onTogglePlay={() => {
-                setPlaybackRate(1);
-                setIsPlaying((p) => !p);
-              }}
+              onTogglePlay={() => setIsPlaying((p) => !p)}
+              onChangePlaybackRate={(rate) => setPlaybackRate(rate)}
               onStepFrame={(delta) => {
                 setIsPlaying(false);
                 setCurrentTime((t) => stepFrames(t, delta, project.sequence.fps));
@@ -672,6 +853,13 @@ export default function App() {
               onInsertSourceAtPlayhead={() => {
                 if (sourceAsset) handleInsertAssetToTimeline(sourceAsset);
               }}
+              onChangeAspectRatio={handleChangeAspectRatio}
+              onToggleCinemaBars={() =>
+                commitProject((prev) => ({
+                  ...prev,
+                  sequence: { ...prev.sequence, cinemaBars: !prev.sequence.cinemaBars },
+                }))
+              }
               onUpdateClipTransform={(clipId, patch: Partial<ClipTransform>) =>
                 handleUpdateClip(clipId, (c) => ({
                   ...c,
@@ -682,20 +870,23 @@ export default function App() {
           )}
         </div>
 
-        {/* Right Dock: Inspector / Lumetri Color */}
+        {/* Right Dock: Inspector */}
         <div className="w-[330px] shrink-0 h-full overflow-hidden">
           <InspectorPanel
             selectedClip={selectedClip}
             scopes={scopes}
             copiedGrade={copiedGrade}
-            defaultTab={workspace === 'color' || workspace === 'photo' ? 'color' : 'color'}
+            activeTab={inspectorTab}
+            onTabChange={setInspectorTab}
             onUpdateClip={handleUpdateClip}
+            onAutoBalanceClip={handleAutoBalanceClip}
             onChangeClipSpeed={(clipId, speed) =>
               commitProject((prev) => ({
                 ...prev,
                 clips: changeClipSpeed(prev.clips, clipId, speed),
               }))
             }
+            onFreezeClip={handleFreezeClip}
             onCopyGrade={(grade) => setCopiedGrade(structuredClone(grade))}
             onPasteGrade={(clipId) => {
               if (!copiedGrade) return;
@@ -710,7 +901,7 @@ export default function App() {
         </div>
       </main>
 
-      {/* Bottom Dock: Multi-Track Timeline (Editing, Color, Audio workspaces) */}
+      {/* Bottom Dock: Multi-Track Timeline */}
       {workspace !== 'photo' && (
         <div className="h-[292px] shrink-0 overflow-hidden">
           <TimelinePanel
@@ -742,11 +933,14 @@ export default function App() {
             }}
             onMoveClip={handleMoveClip}
             onTrimClip={handleTrimClip}
+            onTrimClipToPlayhead={handleTrimClipToPlayhead}
             onSplitClip={handleSplitClip}
+            onSplitAllAtPlayhead={handleSplitAllAtPlayhead}
             onDeleteClip={handleDeleteClip}
+            onCloseTrackGaps={handleCloseTrackGaps}
             onDuplicateClip={handleDuplicateClip}
             onAddMarker={handleAddMarker}
-            onAddTextAtPlayhead={handleAddTitleClip}
+            onAddTextAtPlayhead={() => handleAddTitleClip('hero')}
             onToggleTrackProp={handleToggleTrackProp}
             onAddTrack={(type) =>
               commitProject((prev) => ({
@@ -780,6 +974,7 @@ export default function App() {
                 fadeOut: 0.2,
                 gainDb: 0,
                 transform: { ...DEFAULT_TRANSFORM },
+                effects: { ...DEFAULT_EFFECTS },
                 color: createDefaultColorGrade(),
               };
               commitProject((prev) => ({
@@ -817,6 +1012,7 @@ export default function App() {
         cache={mediaCacheRef.current}
         currentTime={currentTime}
         duration={sequenceDuration}
+        defaultTarget={workspace === 'photo' ? 'still' : 'video'}
       />
     </div>
   );

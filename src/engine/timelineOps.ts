@@ -1,4 +1,10 @@
-import { TimelineClip, Track } from './types';
+import {
+  ClipTransform,
+  PiPLayoutPreset,
+  SequenceAspectPreset,
+  TimelineClip,
+  Track,
+} from './types';
 
 export function getSequenceDuration(clips: TimelineClip[], minDuration: number = 20): number {
   let maxEnd = minDuration;
@@ -57,6 +63,24 @@ export function splitClipAtTime(
   return clips.flatMap((c) => (c.id === clipId ? [leftClip, rightClip] : [c]));
 }
 
+export function splitAllAtTime(
+  clips: TimelineClip[],
+  tracks: Track[],
+  splitTime: number,
+  minPieceDuration: number = 0.2
+): TimelineClip[] {
+  const lockedIds = new Set(tracks.filter((t) => t.locked).map((t) => t.id));
+  let updated = clips;
+  for (const clip of clips) {
+    if (lockedIds.has(clip.trackId)) continue;
+    const offset = splitTime - clip.startTime;
+    if (offset >= minPieceDuration && clip.duration - offset >= minPieceDuration) {
+      updated = splitClipAtTime(updated, clip.id, splitTime, minPieceDuration);
+    }
+  }
+  return updated;
+}
+
 export function moveClip(
   clips: TimelineClip[],
   clipId: string,
@@ -71,7 +95,6 @@ export function moveClip(
   const destTrack = tracks.find((t) => t.id === newTrackId);
   if (sourceTrack?.locked || destTrack?.locked) return clips;
 
-  // Keep video/image/title on video tracks and audio on audio tracks
   const resolvedTrackId =
     destTrack &&
     ((target.kind === 'audio' && destTrack.type === 'audio') ||
@@ -92,6 +115,20 @@ export function moveClip(
   );
 }
 
+export function nudgeClip(
+  clips: TimelineClip[],
+  clipId: string,
+  deltaSeconds: number,
+  tracks: Track[]
+): TimelineClip[] {
+  const target = clips.find((c) => c.id === clipId);
+  if (!target) return clips;
+  const track = tracks.find((t) => t.id === target.trackId);
+  if (track?.locked) return clips;
+  const nextStart = Math.max(0, Number((target.startTime + deltaSeconds).toFixed(4)));
+  return clips.map((c) => (c.id === clipId ? { ...c, startTime: nextStart } : c));
+}
+
 export function trimClip(
   clips: TimelineClip[],
   clipId: string,
@@ -106,7 +143,6 @@ export function trimClip(
     const maxStart = target.startTime + target.duration - minDuration;
     const clampedStart = Math.max(0, Math.min(maxStart, newTime));
     const delta = clampedStart - target.startTime;
-    // Prevent sourceIn from becoming negative
     const actualDelta = Math.max(-target.sourceIn / target.speed, delta);
     const resolvedStart = Number((target.startTime + actualDelta).toFixed(4));
     const resolvedDuration = Number((target.duration - actualDelta).toFixed(4));
@@ -135,6 +171,20 @@ export function trimClip(
   }
 }
 
+export function trimClipToPlayhead(
+  clips: TimelineClip[],
+  clipId: string,
+  edge: 'left' | 'right',
+  playheadTime: number
+): TimelineClip[] {
+  const target = clips.find((c) => c.id === clipId);
+  if (!target) return clips;
+  if (playheadTime <= target.startTime || playheadTime >= target.startTime + target.duration) {
+    return clips;
+  }
+  return trimClip(clips, clipId, edge, playheadTime);
+}
+
 export function deleteClip(
   clips: TimelineClip[],
   clipId: string,
@@ -157,6 +207,24 @@ export function deleteClip(
     }
     return c;
   });
+}
+
+export function closeTrackGaps(clips: TimelineClip[], trackId: string): TimelineClip[] {
+  const trackClips = clips
+    .filter((c) => c.trackId === trackId)
+    .sort((a, b) => a.startTime - b.startTime);
+  if (trackClips.length === 0) return clips;
+
+  let cursor = 0;
+  const packedMap = new Map<string, number>();
+  for (const clip of trackClips) {
+    packedMap.set(clip.id, Number(cursor.toFixed(4)));
+    cursor += clip.duration;
+  }
+
+  return clips.map((c) =>
+    packedMap.has(c.id) ? { ...c, startTime: packedMap.get(c.id)! } : c
+  );
 }
 
 export function duplicateClip(clips: TimelineClip[], clipId: string): TimelineClip[] {
@@ -194,7 +262,7 @@ export function getActiveClipsAtTime(
     .sort((a, b) => {
       const ta = trackMap.get(a.trackId)?.index ?? 0;
       const tb = trackMap.get(b.trackId)?.index ?? 0;
-      return ta - tb; // V1 bottom -> V2 -> V3 top
+      return ta - tb;
     });
 
   const audioClips = active.filter((c) => {
@@ -241,12 +309,91 @@ export function addTrack(tracks: Track[], type: 'video' | 'audio'): Track[] {
     locked: false,
     visible: true,
     gainDb: 0,
+    pan: 0,
+    tonePreset: 'normal',
   };
 
   if (type === 'video') {
-    // Video tracks stack top-down (V4, V3, V2, V1)
     return [newTrack, ...tracks];
   }
   return [...tracks, newTrack];
 }
 
+export function getPiPLayoutTransform(
+  preset: PiPLayoutPreset,
+  current: ClipTransform
+): ClipTransform {
+  switch (preset) {
+    case 'full':
+      return {
+        ...current,
+        x: 0,
+        y: 0,
+        scale: 100,
+        cropLeft: 0,
+        cropRight: 0,
+        cropTop: 0,
+        cropBottom: 0,
+      };
+    case 'pip-tr':
+      return {
+        ...current,
+        x: 340,
+        y: -185,
+        scale: 34,
+        cropLeft: 0,
+        cropRight: 0,
+        cropTop: 0,
+        cropBottom: 0,
+      };
+    case 'pip-tl':
+      return {
+        ...current,
+        x: -340,
+        y: -185,
+        scale: 34,
+        cropLeft: 0,
+        cropRight: 0,
+        cropTop: 0,
+        cropBottom: 0,
+      };
+    case 'split-left':
+      return {
+        ...current,
+        x: -320,
+        y: 0,
+        scale: 100,
+        cropLeft: 25,
+        cropRight: 25,
+        cropTop: 0,
+        cropBottom: 0,
+      };
+    case 'split-right':
+      return {
+        ...current,
+        x: 320,
+        y: 0,
+        scale: 100,
+        cropLeft: 25,
+        cropRight: 25,
+        cropTop: 0,
+        cropBottom: 0,
+      };
+  }
+}
+
+export function getSequenceDimensionsForRatio(ratio: SequenceAspectPreset): {
+  width: number;
+  height: number;
+} {
+  switch (ratio) {
+    case '9:16':
+      return { width: 1080, height: 1920 };
+    case '1:1':
+      return { width: 1080, height: 1080 };
+    case '4:5':
+      return { width: 1080, height: 1350 };
+    default:
+      return { width: 1920, height: 1080 };
+  }
+}

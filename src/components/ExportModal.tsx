@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Check, Download, Film, Image as ImageIcon, X } from 'lucide-react';
 import { LoadedMediaCache, renderCompositeFrame } from '../engine/renderer';
 import { secondsToTimecode } from '../engine/timecode';
@@ -14,6 +14,7 @@ interface ExportModalProps {
   cache: LoadedMediaCache;
   currentTime: number;
   duration: number;
+  defaultTarget?: 'still' | 'video';
 }
 
 export const ExportModal: React.FC<ExportModalProps> = ({
@@ -26,19 +27,29 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   cache,
   currentTime,
   duration,
+  defaultTarget = 'still',
 }) => {
-  const [exportType, setExportType] = useState<'still' | 'video'>('still');
+  const [exportType, setExportType] = useState<'still' | 'video'>(defaultTarget);
   const [imageFormat, setImageFormat] = useState<'image/png' | 'image/jpeg' | 'image/webp'>('image/png');
-  const [resolution, setResolution] = useState<'1080p' | '720p' | '4k'>('1080p');
+  const [resolution, setResolution] = useState<'sequence' | '1080p' | '720p' | '4k'>('sequence');
   const [quality, setQuality] = useState(92);
   const [isExporting, setIsExporting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [doneMessage, setDoneMessage] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (isOpen) {
+      setExportType(defaultTarget);
+      setDoneMessage(null);
+    }
+  }, [isOpen, defaultTarget]);
+
   if (!isOpen) return null;
 
   const dims =
-    resolution === '4k'
+    resolution === 'sequence'
+      ? { w: sequence.width, h: sequence.height }
+      : resolution === '4k'
       ? { w: 3840, h: 2160 }
       : resolution === '1080p'
       ? { w: 1920, h: 1080 }
@@ -74,7 +85,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       (blob) => {
         if (blob) {
           triggerDownload(blob, `auteur_frame_${secondsToTimecode(currentTime, sequence.fps).replace(/:/g, '-')}.${ext}`);
-          setDoneMessage(`Exported ${dims.w}×${dims.h} ${ext.toUpperCase()} frame.`);
+          setDoneMessage(`Saved ${dims.w}×${dims.h} ${ext.toUpperCase()} image.`);
         }
         setIsExporting(false);
       },
@@ -132,9 +143,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
       recorder.stop();
       await finished;
-      setDoneMessage(`Rendered ${exportDur.toFixed(1)}s sequence to WebM.`);
+      setDoneMessage(`Saved ${exportDur.toFixed(1)}s video (.webm).`);
     } catch {
-      setDoneMessage('WebM capture unsupported in this browser; try PNG/JPEG Frame Export.');
+      setDoneMessage('Video export not supported in this browser; try Photo/Frame export.');
     } finally {
       setIsExporting(false);
     }
@@ -144,12 +155,12 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Export Media Settings"
+      aria-label="Save and Export Settings"
       className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4"
     >
       <div className="w-full max-w-lg bg-[#17191E] border border-[#2C303A] rounded-md shadow-2xl overflow-hidden">
         <div className="px-4 py-3 border-b border-[#252830] flex items-center justify-between">
-          <h2 className="text-[14px] font-semibold text-white">Export Media</h2>
+          <h2 className="text-[14px] font-semibold text-white">Save & Export</h2>
           <button
             type="button"
             onClick={onClose}
@@ -175,7 +186,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               <ImageIcon className="w-4 h-4 shrink-0 text-[#60A5FA]" />
               <div>
                 <div className="text-[12px] font-semibold">Current Frame / Photo</div>
-                <div className="text-[10px] opacity-75">Graded PNG, JPEG, or WebP</div>
+                <div className="text-[10px] opacity-75">High-res PNG, JPEG, or WebP</div>
               </div>
             </button>
 
@@ -190,29 +201,32 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             >
               <Film className="w-4 h-4 shrink-0 text-[#34D399]" />
               <div>
-                <div className="text-[12px] font-semibold">Master Sequence</div>
-                <div className="text-[10px] opacity-75">Real-time WebM Render</div>
+                <div className="text-[12px] font-semibold">Full Video</div>
+                <div className="text-[10px] opacity-75">Render Timeline to WebM Video</div>
               </div>
             </button>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <label className="block text-[11px] text-[#9CA3AF]">Output Resolution</label>
+              <label className="block text-[11px] text-[#9CA3AF]">Size / Resolution</label>
               <select
                 value={resolution}
-                onChange={(e) => setResolution(e.target.value as '1080p' | '720p' | '4k')}
+                onChange={(e) => setResolution(e.target.value as 'sequence' | '1080p' | '720p' | '4k')}
                 className="w-full bg-[#101114] border border-[#282B33] rounded px-2.5 py-1.5 text-[12px] text-white"
               >
+                <option value="sequence">
+                  Match Project ({sequence.width} × {sequence.height})
+                </option>
                 <option value="1080p">1920 × 1080 (Full HD)</option>
-                <option value="4k">3840 × 2160 (4K UHD)</option>
-                <option value="720p">1280 × 720 (HD Proxy)</option>
+                <option value="4k">3840 × 2160 (4K Ultra HD)</option>
+                <option value="720p">1280 × 720 (HD Fast)</option>
               </select>
             </div>
 
             {exportType === 'still' ? (
               <div className="space-y-1">
-                <label className="block text-[11px] text-[#9CA3AF]">Format</label>
+                <label className="block text-[11px] text-[#9CA3AF]">File Type</label>
                 <select
                   value={imageFormat}
                   onChange={(e) =>
@@ -220,14 +234,14 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                   }
                   className="w-full bg-[#101114] border border-[#282B33] rounded px-2.5 py-1.5 text-[12px] text-white"
                 >
-                  <option value="image/png">PNG (Lossless)</option>
-                  <option value="image/jpeg">JPEG (Editorial)</option>
-                  <option value="image/webp">WebP (Web Master)</option>
+                  <option value="image/png">PNG (Best Quality)</option>
+                  <option value="image/jpeg">JPEG (Smaller File)</option>
+                  <option value="image/webp">WebP (Web Ready)</option>
                 </select>
               </div>
             ) : (
               <div className="space-y-1">
-                <label className="block text-[11px] text-[#9CA3AF]">Range</label>
+                <label className="block text-[11px] text-[#9CA3AF]">Export Range</label>
                 <div className="px-2.5 py-1.5 bg-[#101114] border border-[#282B33] rounded text-[12px] font-mono-tabular text-[#D1D5DB]">
                   {secondsToTimecode(sequence.inPoint ?? 0, sequence.fps)} →{' '}
                   {secondsToTimecode(sequence.outPoint ?? duration, sequence.fps)}
@@ -239,7 +253,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           {exportType === 'still' && imageFormat !== 'image/png' && (
             <div className="space-y-1">
               <div className="flex justify-between text-[11px] text-[#9CA3AF]">
-                <span>Compression Quality</span>
+                <span>Image Quality</span>
                 <span className="font-mono-tabular text-white">{quality}%</span>
               </div>
               <input
@@ -256,7 +270,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           {isExporting && exportType === 'video' && (
             <div className="space-y-1.5">
               <div className="flex justify-between text-[11px] text-[#9CA3AF]">
-                <span>Encoding sequence frames...</span>
+                <span>Rendering video frames...</span>
                 <span className="font-mono-tabular text-white">{progress}%</span>
               </div>
               <div className="h-1.5 bg-[#101114] rounded overflow-hidden">
@@ -291,7 +305,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             className="flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-medium text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:opacity-50 rounded cursor-pointer"
           >
             <Download className="w-3.5 h-3.5" />
-            <span>{isExporting ? 'Rendering...' : 'Render & Download'}</span>
+            <span>{isExporting ? 'Saving...' : 'Download File'}</span>
           </button>
         </div>
       </div>

@@ -6,22 +6,30 @@ import {
   ClipboardPaste,
   FlipHorizontal2,
   FlipVertical2,
+  PauseCircle,
   RotateCcw,
   SlidersHorizontal,
 } from 'lucide-react';
 import {
-  computeAutoBalanceGrade,
   createDefaultColorGrade,
+  DEFAULT_EFFECTS,
   DEFAULT_TRANSFORM,
   LUT_PRESETS,
 } from '../engine/colorEngine';
+import { getPiPLayoutTransform } from '../engine/timelineOps';
 import {
+  AudioTonePreset,
   BlendMode,
+  ClipEffects,
   ClipTransform,
   ColorGrade,
   LUTPresetId,
+  MotionPreset,
+  PiPLayoutPreset,
   ScopeData,
+  TextFontFamily,
   TextOverlay,
+  TextStylePreset,
   TimelineClip,
   TransitionType,
 } from '../engine/types';
@@ -32,9 +40,12 @@ interface InspectorPanelProps {
   selectedClip: TimelineClip | null;
   scopes: ScopeData | null;
   copiedGrade: ColorGrade | null;
-  defaultTab?: 'effects' | 'color' | 'text' | 'scopes';
+  activeTab: 'effects' | 'color' | 'text' | 'scopes';
+  onTabChange: (tab: 'effects' | 'color' | 'text' | 'scopes') => void;
   onUpdateClip: (clipId: string, updater: (clip: TimelineClip) => TimelineClip) => void;
+  onAutoBalanceClip: (clipId: string) => void;
   onChangeClipSpeed: (clipId: string, speed: number) => void;
+  onFreezeClip?: (clipId: string) => void;
   onCopyGrade: (grade: ColorGrade) => void;
   onPasteGrade: (clipId: string) => void;
 }
@@ -134,20 +145,29 @@ const LUT_SWATCHES: Record<LUTPresetId, string> = {
   'golden-hour': 'linear-gradient(135deg, #f59e0b, #78350f)',
 };
 
+const PIP_PRESETS: { id: PiPLayoutPreset; label: string }[] = [
+  { id: 'full', label: 'Full' },
+  { id: 'pip-tr', label: 'PiP R' },
+  { id: 'pip-tl', label: 'PiP L' },
+  { id: 'split-left', label: 'Split L' },
+  { id: 'split-right', label: 'Split R' },
+];
+
 export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   selectedClip,
   scopes,
   copiedGrade,
-  defaultTab = 'color',
+  activeTab,
+  onTabChange,
   onUpdateClip,
+  onAutoBalanceClip,
   onChangeClipSpeed,
+  onFreezeClip,
   onCopyGrade,
   onPasteGrade,
 }) => {
-  const [tab, setTab] = useState<'effects' | 'color' | 'text' | 'scopes'>(defaultTab);
-
   const effectiveTab =
-    selectedClip?.kind === 'title' && tab === 'color' ? 'text' : tab;
+    selectedClip?.kind === 'title' && activeTab === 'color' ? 'text' : activeTab;
 
   const updateColor = (patch: Partial<ColorGrade>) => {
     if (!selectedClip) return;
@@ -165,6 +185,14 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     }));
   };
 
+  const updateEffects = (patch: Partial<ClipEffects>) => {
+    if (!selectedClip) return;
+    onUpdateClip(selectedClip.id, (c) => ({
+      ...c,
+      effects: { ...(c.effects ?? DEFAULT_EFFECTS), ...patch },
+    }));
+  };
+
   const updateText = (patch: Partial<TextOverlay>) => {
     if (!selectedClip || !selectedClip.textOverlay) return;
     onUpdateClip(selectedClip.id, (c) => ({
@@ -173,18 +201,64 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     }));
   };
 
+  const applyTextPreset = (preset: TextStylePreset) => {
+    if (preset === 'hero') {
+      updateText({
+        stylePreset: 'hero',
+        lowerThird: false,
+        fontSize: 44,
+        fontWeight: 700,
+        align: 'center',
+        backgroundOpacity: 65,
+        textShadow: true,
+      });
+    } else if (preset === 'lower-third') {
+      updateText({
+        stylePreset: 'lower-third',
+        lowerThird: true,
+        fontSize: 30,
+        fontWeight: 700,
+        align: 'left',
+        backgroundOpacity: 82,
+        textShadow: false,
+      });
+    } else if (preset === 'caption') {
+      updateText({
+        stylePreset: 'caption',
+        lowerThird: false,
+        fontSize: 28,
+        fontWeight: 600,
+        align: 'center',
+        backgroundOpacity: 78,
+        textShadow: true,
+      });
+    } else {
+      updateText({
+        stylePreset: 'tag',
+        lowerThird: false,
+        fontSize: 24,
+        fontWeight: 600,
+        align: 'center',
+        backgroundOpacity: 90,
+        textShadow: false,
+      });
+    }
+  };
+
+  const clipEffects = selectedClip?.effects ?? DEFAULT_EFFECTS;
+
   return (
     <aside
-      aria-label="Clip Inspector and Lumetri Color"
+      aria-label="Clip Inspector"
       className="flex flex-col h-full bg-[#16171B] border-l border-[#262930] select-none overflow-hidden"
     >
       {/* Inspector Tabs */}
-      <div className="h-9 px-2 bg-[#18191E] border-b border-[#24272E] flex items-center gap-1 shrink-0 overflow-x-auto">
+      <div className="h-9 px-2 bg-[#18191E] border-b border-[#24272E] grid grid-cols-4 gap-1 items-center shrink-0">
         {(
           [
-            { id: 'color', label: 'Lumetri Color' },
-            { id: 'effects', label: 'Effect Controls' },
-            { id: 'text', label: 'Graphics' },
+            { id: 'color', label: 'Color' },
+            { id: 'effects', label: 'Effects' },
+            { id: 'text', label: 'Text' },
             { id: 'scopes', label: 'Scopes' },
           ] as const
         ).map((t) => {
@@ -193,8 +267,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             <button
               key={t.id}
               type="button"
-              onClick={() => setTab(t.id)}
-              className={`px-2.5 py-1 text-[11px] font-medium rounded-xs transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+              onClick={() => onTabChange(t.id)}
+              className={`py-1 text-[11px] font-medium rounded-xs transition-colors whitespace-nowrap cursor-pointer text-center ${
                 active
                   ? 'bg-[#282C36] text-white'
                   : 'text-[#8E939E] hover:text-[#D1D5DB]'
@@ -219,7 +293,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           </>
         ) : (
           <span className="text-[11px] text-[#6B7280]">
-            Select a clip on the timeline to inspect
+            Click a clip on the timeline to edit it
           </span>
         )}
       </div>
@@ -230,39 +304,34 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           <div className="p-3 space-y-3">
             <ScopesPanel scopes={scopes} />
             <div className="text-[11px] text-[#8E939E] leading-relaxed">
-              Live signal scopes sampled directly from the rendered Program Monitor composite frame.
+              Live brightness and RGB color levels sampled from your current video preview.
             </div>
           </div>
         )}
 
         {!selectedClip && effectiveTab !== 'scopes' && (
           <div className="p-6 text-center text-[12px] text-[#6B7280]">
-            Click any video, photo, audio, or title clip in the timeline to adjust its parameters.
+            Select any video, photo, audio, or text clip on the timeline to edit its settings.
           </div>
         )}
 
         {selectedClip && effectiveTab === 'color' && (
           <div>
-            {/* Quick Color Action Strip: Auto Balance + Copy/Paste Grade */}
+            {/* Quick Color Action Strip: Auto Fix + Copy/Paste Grade */}
             <div className="px-3 py-2 border-b border-[#23262E] bg-[#14151A] flex items-center gap-1.5">
               <button
                 type="button"
-                onClick={() =>
-                  onUpdateClip(selectedClip.id, (c) => ({
-                    ...c,
-                    color: computeAutoBalanceGrade(scopes, c.color),
-                  }))
-                }
-                title="Automatically balance exposure and contrast from frame histogram"
+                onClick={() => onAutoBalanceClip(selectedClip.id)}
+                title="Automatically fix brightness and contrast"
                 className="flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-medium text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded cursor-pointer whitespace-nowrap"
               >
                 <SlidersHorizontal className="w-3 h-3" />
-                <span>Auto Balance</span>
+                <span>Auto Fix Color</span>
               </button>
               <button
                 type="button"
                 onClick={() => onCopyGrade(selectedClip.color)}
-                title="Copy Color Grade"
+                title="Copy Color Settings"
                 aria-label="Copy Grade"
                 className="px-2 py-1.5 text-[11px] font-medium text-[#C7CBD4] hover:text-white bg-[#1E2128] border border-[#2C303A] rounded cursor-pointer flex items-center gap-1 whitespace-nowrap"
               >
@@ -273,7 +342,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 type="button"
                 disabled={!copiedGrade}
                 onClick={() => onPasteGrade(selectedClip.id)}
-                title="Paste Copied Grade to Clip"
+                title="Paste Copied Color Settings"
                 aria-label="Paste Grade"
                 className="px-2 py-1.5 text-[11px] font-medium text-[#C7CBD4] hover:text-white disabled:opacity-35 disabled:pointer-events-none bg-[#1E2128] border border-[#2C303A] rounded cursor-pointer flex items-center gap-1 whitespace-nowrap"
               >
@@ -283,7 +352,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             </div>
 
             <CollapsibleSection
-              title="Creative LUTs"
+              title="Color Looks (Presets)"
               defaultOpen
               onReset={() => updateColor({ lut: 'none', lutIntensity: 100 })}
             >
@@ -308,14 +377,14 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                           style={{ background: LUT_SWATCHES[lut.id] }}
                         />
                         <div className="text-[9px] text-[#D1D5DB] truncate">
-                          {lut.id === 'none' ? 'Neutral' : lut.name.split(' ')[0]}
+                          {lut.shortName}
                         </div>
                       </button>
                     );
                   })}
                 </div>
                 <select
-                  aria-label="Color LUT Preset"
+                  aria-label="Color Look Preset"
                   value={selectedClip.color.lut}
                   onChange={(e) => updateColor({ lut: e.target.value as LUTPresetId })}
                   className="w-full bg-[#0E0F12] border border-[#282B33] rounded px-2.5 py-1.5 text-[12px] text-[#E5E7EB] focus:outline-none focus:border-[#3B82F6] cursor-pointer"
@@ -327,7 +396,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   ))}
                 </select>
                 <SliderRow
-                  label="LUT Intensity"
+                  label="Look Strength"
                   value={selectedClip.color.lutIntensity}
                   min={0}
                   max={100}
@@ -339,7 +408,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             </CollapsibleSection>
 
             <CollapsibleSection
-              title="Basic Correction"
+              title="Light & Color"
               defaultOpen
               onReset={() =>
                 updateColor({
@@ -353,11 +422,12 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   blacks: 0,
                   saturation: 0,
                   vibrance: 0,
+                  sharpness: 0,
                 })
               }
             >
               <SliderRow
-                label="Temperature"
+                label="Warmth"
                 value={selectedClip.color.temperature}
                 min={-100}
                 max={100}
@@ -372,7 +442,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               />
               <div className="h-px bg-[#22252C] my-1" />
               <SliderRow
-                label="Exposure"
+                label="Brightness (Exposure)"
                 value={selectedClip.color.exposure}
                 min={-2.5}
                 max={2.5}
@@ -430,6 +500,13 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 max={100}
                 onChange={(v) => updateColor({ saturation: v })}
               />
+              <SliderRow
+                label="Clarity / Sharpness"
+                value={selectedClip.color.sharpness}
+                min={0}
+                max={100}
+                onChange={(v) => updateColor({ sharpness: v })}
+              />
             </CollapsibleSection>
 
             <CollapsibleSection
@@ -451,7 +528,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               />
             </CollapsibleSection>
 
-            <CollapsibleSection title="RGB Tone Curves" defaultOpen={false}>
+            <CollapsibleSection title="Tone Curves" defaultOpen={false}>
               <ToneCurveEditor
                 curves={selectedClip.color.curves}
                 onChange={(ch, pts) =>
@@ -463,12 +540,12 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             </CollapsibleSection>
 
             <CollapsibleSection
-              title="Vignette & Film Grain"
+              title="Dark Edges & Grain"
               defaultOpen={false}
               onReset={() => updateColor({ vignette: 0, grain: 0 })}
             >
               <SliderRow
-                label="Vignette"
+                label="Dark Edges (Vignette)"
                 value={selectedClip.color.vignette}
                 min={-100}
                 max={100}
@@ -494,7 +571,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 }
                 className="w-full py-1.5 text-[11px] font-medium text-[#C7CBD4] hover:text-white bg-[#1F222A] hover:bg-[#292D37] border border-[#2D313B] rounded cursor-pointer transition-colors"
               >
-                Reset All Color Grading
+                Reset All Color
               </button>
             </div>
           </div>
@@ -502,41 +579,59 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 
         {selectedClip && effectiveTab === 'effects' && (
           <div>
+            {/* Quick Split Screen & PiP Layouts */}
             <CollapsibleSection
-              title="Motion & Transform"
+              title="Screen Layout & Split Screen"
               defaultOpen
               onReset={() => updateTransform({ ...DEFAULT_TRANSFORM })}
             >
-              <div className="flex items-center gap-2 pb-1">
+              <div className="grid grid-cols-5 gap-1">
+                {PIP_PRESETS.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() =>
+                      onUpdateClip(selectedClip.id, (c) => ({
+                        ...c,
+                        transform: getPiPLayoutTransform(p.id, c.transform),
+                      }))
+                    }
+                    className="py-1 text-[10px] font-medium text-[#D1D5DB] hover:text-white bg-[#101114] hover:bg-[#262D3B] border border-[#262930] rounded cursor-pointer whitespace-nowrap"
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-2 pt-1">
                 <button
                   type="button"
                   onClick={() => updateTransform({ flipH: !selectedClip.transform.flipH })}
                   aria-pressed={Boolean(selectedClip.transform.flipH)}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-1 text-[11px] rounded border cursor-pointer ${
+                  className={`flex-1 flex items-center justify-center gap-1 py-1 text-[11px] rounded border cursor-pointer ${
                     selectedClip.transform.flipH
                       ? 'bg-[#252B36] border-[#3B82F6] text-white'
                       : 'bg-[#111215] border-[#262930] text-[#9CA3AF] hover:text-white'
                   }`}
                 >
                   <FlipHorizontal2 className="w-3 h-3" />
-                  <span>Flip H</span>
+                  <span>Flip L/R</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => updateTransform({ flipV: !selectedClip.transform.flipV })}
                   aria-pressed={Boolean(selectedClip.transform.flipV)}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-1 text-[11px] rounded border cursor-pointer ${
+                  className={`flex-1 flex items-center justify-center gap-1 py-1 text-[11px] rounded border cursor-pointer ${
                     selectedClip.transform.flipV
                       ? 'bg-[#252B36] border-[#3B82F6] text-white'
                       : 'bg-[#111215] border-[#262930] text-[#9CA3AF] hover:text-white'
                   }`}
                 >
                   <FlipVertical2 className="w-3 h-3" />
-                  <span>Flip V</span>
+                  <span>Flip U/D</span>
                 </button>
               </div>
               <SliderRow
-                label="Position X"
+                label="Move Left / Right"
                 value={selectedClip.transform.x}
                 min={-640}
                 max={640}
@@ -544,7 +639,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 onChange={(v) => updateTransform({ x: v })}
               />
               <SliderRow
-                label="Position Y"
+                label="Move Up / Down"
                 value={selectedClip.transform.y}
                 min={-360}
                 max={360}
@@ -552,7 +647,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 onChange={(v) => updateTransform({ y: v })}
               />
               <SliderRow
-                label="Scale"
+                label="Zoom Size"
                 value={selectedClip.transform.scale}
                 min={10}
                 max={250}
@@ -561,15 +656,32 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 onChange={(v) => updateTransform({ scale: v })}
               />
               <SliderRow
-                label="Rotation"
+                label="Rotate"
                 value={selectedClip.transform.rotation}
                 min={-180}
                 max={180}
                 unit="°"
                 onChange={(v) => updateTransform({ rotation: v })}
               />
+              <div className="space-y-1 pt-0.5">
+                <label className="block text-[11px] text-[#A8AEB8]">Camera Motion</label>
+                <select
+                  aria-label="Camera Motion Preset"
+                  value={selectedClip.transform.motionPreset ?? 'none'}
+                  onChange={(e) =>
+                    updateTransform({ motionPreset: e.target.value as MotionPreset })
+                  }
+                  className="w-full bg-[#0E0F12] border border-[#282B33] rounded px-2 py-1 text-[11px] text-[#E5E7EB] cursor-pointer"
+                >
+                  <option value="none">Static (None)</option>
+                  <option value="zoom-in">Slow Zoom In</option>
+                  <option value="zoom-out">Slow Zoom Out</option>
+                  <option value="pan-left">Pan Left → Right</option>
+                  <option value="pan-right">Pan Right → Left</option>
+                </select>
+              </div>
               <SliderRow
-                label="Ken Burns Push"
+                label="Extra Smooth Zoom"
                 value={selectedClip.transform.kenBurnsZoom}
                 min={0}
                 max={25}
@@ -579,26 +691,75 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             </CollapsibleSection>
 
             <CollapsibleSection
-              title="Transitions & Speed"
+              title="Visual Filters & Blur"
+              defaultOpen
+              onReset={() => updateEffects({ ...DEFAULT_EFFECTS })}
+            >
+              <SliderRow
+                label="Background Blur"
+                value={clipEffects.blur}
+                min={0}
+                max={20}
+                step={0.5}
+                unit=" px"
+                onChange={(v) => updateEffects({ blur: v })}
+              />
+              <SliderRow
+                label="Soft Glow"
+                value={clipEffects.glow}
+                min={0}
+                max={100}
+                unit="%"
+                onChange={(v) => updateEffects({ glow: v })}
+              />
+              <SliderRow
+                label="Sepia Warmth"
+                value={clipEffects.sepia}
+                min={0}
+                max={100}
+                unit="%"
+                onChange={(v) => updateEffects({ sepia: v })}
+              />
+              <SliderRow
+                label="Vintage Fade"
+                value={clipEffects.vintageFade}
+                min={0}
+                max={100}
+                unit="%"
+                onChange={(v) => updateEffects({ vintageFade: v })}
+              />
+              <SliderRow
+                label="Rounded Corners"
+                value={clipEffects.cornerRadius}
+                min={0}
+                max={80}
+                unit=" px"
+                onChange={(v) => updateEffects({ cornerRadius: v })}
+              />
+            </CollapsibleSection>
+
+            <CollapsibleSection
+              title="Speed & Transitions"
               defaultOpen
               onReset={() =>
                 onUpdateClip(selectedClip.id, (c) => ({
                   ...c,
+                  reversed: false,
                   transitionIn: 'none',
                   transitionOut: 'none',
                   transitionDuration: 0.6,
                 }))
               }
             >
-              <div className="space-y-1">
-                <span className="block text-[11px] text-[#A8AEB8]">Clip Speed</span>
-                <div className="grid grid-cols-4 gap-1">
-                  {[0.5, 1, 1.5, 2].map((spd) => (
+              <div className="space-y-1.5">
+                <span className="block text-[11px] text-[#A8AEB8]">Playback Speed</span>
+                <div className="grid grid-cols-5 gap-1">
+                  {[0.25, 0.5, 1, 1.5, 2].map((spd) => (
                     <button
                       key={spd}
                       type="button"
                       onClick={() => onChangeClipSpeed(selectedClip.id, spd)}
-                      className={`py-1 text-[11px] font-mono-tabular rounded border cursor-pointer ${
+                      className={`py-1 text-[10px] font-mono-tabular rounded border cursor-pointer ${
                         Math.abs((selectedClip.speed || 1) - spd) < 0.05
                           ? 'bg-[#262D3B] border-[#3B82F6] text-white'
                           : 'bg-[#101114] border-[#262930] text-[#9CA3AF] hover:text-white'
@@ -608,13 +769,39 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                     </button>
                   ))}
                 </div>
+                <div className="flex items-center gap-1.5 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onUpdateClip(selectedClip.id, (c) => ({ ...c, reversed: !c.reversed }))
+                    }
+                    aria-pressed={Boolean(selectedClip.reversed)}
+                    className={`flex-1 py-1 text-[11px] rounded border cursor-pointer ${
+                      selectedClip.reversed
+                        ? 'bg-[#262D3B] border-[#3B82F6] text-white'
+                        : 'bg-[#101114] border-[#262930] text-[#9CA3AF] hover:text-white'
+                    }`}
+                  >
+                    Reverse Clip
+                  </button>
+                  {onFreezeClip && selectedClip.kind !== 'audio' && (
+                    <button
+                      type="button"
+                      onClick={() => onFreezeClip(selectedClip.id)}
+                      className="flex-1 flex items-center justify-center gap-1 py-1 text-[11px] rounded border bg-[#101114] border-[#262930] text-[#C7CBD4] hover:text-white cursor-pointer"
+                    >
+                      <PauseCircle className="w-3 h-3" />
+                      <span>Freeze 3s</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2 pt-1">
                 <div className="space-y-1">
-                  <label className="block text-[11px] text-[#A8AEB8]">In Transition</label>
+                  <label className="block text-[11px] text-[#A8AEB8]">Enter Transition</label>
                   <select
-                    aria-label="In Transition"
+                    aria-label="Enter Transition"
                     value={selectedClip.transitionIn ?? 'none'}
                     onChange={(e) =>
                       onUpdateClip(selectedClip.id, (c) => ({
@@ -625,17 +812,21 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                     className="w-full bg-[#0E0F12] border border-[#282B33] rounded px-2 py-1 text-[11px] text-[#E5E7EB]"
                   >
                     <option value="none">None</option>
-                    <option value="cross-dissolve">Cross Dissolve</option>
-                    <option value="dip-black">Dip to Black</option>
+                    <option value="cross-dissolve">Smooth Fade</option>
+                    <option value="dip-black">Fade from Black</option>
+                    <option value="fade-white">Flash from White</option>
                     <option value="wipe-left">Wipe Left</option>
                     <option value="wipe-right">Wipe Right</option>
+                    <option value="slide-left">Slide In Left</option>
+                    <option value="slide-right">Slide In Right</option>
+                    <option value="zoom-in">Zoom In</option>
                   </select>
                 </div>
 
                 <div className="space-y-1">
-                  <label className="block text-[11px] text-[#A8AEB8]">Out Transition</label>
+                  <label className="block text-[11px] text-[#A8AEB8]">Exit Transition</label>
                   <select
-                    aria-label="Out Transition"
+                    aria-label="Exit Transition"
                     value={selectedClip.transitionOut ?? 'none'}
                     onChange={(e) =>
                       onUpdateClip(selectedClip.id, (c) => ({
@@ -646,14 +837,17 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                     className="w-full bg-[#0E0F12] border border-[#282B33] rounded px-2 py-1 text-[11px] text-[#E5E7EB]"
                   >
                     <option value="none">None</option>
-                    <option value="cross-dissolve">Cross Dissolve</option>
-                    <option value="dip-black">Dip to Black</option>
+                    <option value="cross-dissolve">Smooth Fade</option>
+                    <option value="dip-black">Fade to Black</option>
+                    <option value="fade-white">Flash to White</option>
+                    <option value="slide-left">Slide Out Left</option>
+                    <option value="slide-right">Slide Out Right</option>
                   </select>
                 </div>
               </div>
 
               <SliderRow
-                label="Transition Duration"
+                label="Transition Length"
                 value={selectedClip.transitionDuration ?? 0.6}
                 min={0.2}
                 max={2.0}
@@ -667,7 +861,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             </CollapsibleSection>
 
             <CollapsibleSection
-              title="Opacity & Blend"
+              title="Opacity & Blending"
               defaultOpen={false}
               onReset={() => updateTransform({ opacity: 100, blendMode: 'source-over' })}
             >
@@ -689,9 +883,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   className="w-full bg-[#0E0F12] border border-[#282B33] rounded px-2.5 py-1.5 text-[12px] text-[#E5E7EB] cursor-pointer"
                 >
                   <option value="source-over">Normal</option>
-                  <option value="screen">Screen</option>
-                  <option value="multiply">Multiply</option>
-                  <option value="overlay">Overlay</option>
+                  <option value="screen">Lighten (Screen)</option>
+                  <option value="multiply">Darken (Multiply)</option>
+                  <option value="overlay">High Contrast (Overlay)</option>
                   <option value="soft-light">Soft Light</option>
                 </select>
               </div>
@@ -760,9 +954,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               />
             </CollapsibleSection>
 
-            <CollapsibleSection title="Audio Gain" defaultOpen={selectedClip.kind === 'audio'}>
+            <CollapsibleSection title="Clip Volume" defaultOpen={selectedClip.kind === 'audio'}>
               <SliderRow
-                label="Clip Gain"
+                label="Volume Level"
                 value={selectedClip.gainDb}
                 min={-36}
                 max={12}
@@ -772,6 +966,27 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   onUpdateClip(selectedClip.id, (c) => ({ ...c, gainDb: v }))
                 }
               />
+              {selectedClip.kind === 'audio' && (
+                <div className="space-y-1">
+                  <label className="block text-[11px] text-[#A8AEB8]">Audio Tone Preset</label>
+                  <select
+                    aria-label="Audio Tone Preset"
+                    value={selectedClip.audioTone ?? 'normal'}
+                    onChange={(e) =>
+                      onUpdateClip(selectedClip.id, (c) => ({
+                        ...c,
+                        audioTone: e.target.value as AudioTonePreset,
+                      }))
+                    }
+                    className="w-full bg-[#0E0F12] border border-[#282B33] rounded px-2 py-1 text-[11px] text-[#E5E7EB]"
+                  >
+                    <option value="normal">Natural</option>
+                    <option value="voice">Clear Voice</option>
+                    <option value="warm-bass">Warm Bass</option>
+                    <option value="radio">Lo-Fi Radio</option>
+                  </select>
+                </div>
+              )}
             </CollapsibleSection>
           </div>
         )}
@@ -781,7 +996,34 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             {selectedClip.textOverlay ? (
               <>
                 <div className="space-y-1">
-                  <label className="block text-[11px] text-[#A8AEB8]">Primary Title</label>
+                  <span className="block text-[11px] text-[#A8AEB8]">Text Style Preset</span>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {(
+                      [
+                        { id: 'hero', label: 'Hero Title' },
+                        { id: 'lower-third', label: 'Lower Third' },
+                        { id: 'caption', label: 'Subtitles' },
+                        { id: 'tag', label: 'Minimal Tag' },
+                      ] as const
+                    ).map((st) => (
+                      <button
+                        key={st.id}
+                        type="button"
+                        onClick={() => applyTextPreset(st.id)}
+                        className={`py-1 text-[11px] rounded border cursor-pointer ${
+                          selectedClip.textOverlay?.stylePreset === st.id
+                            ? 'bg-[#262D3B] border-[#3B82F6] text-white'
+                            : 'bg-[#101114] border-[#262930] text-[#C7CBD4] hover:text-white'
+                        }`}
+                      >
+                        {st.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-[11px] text-[#A8AEB8]">Heading Text</label>
                   <input
                     type="text"
                     value={selectedClip.textOverlay.text}
@@ -790,7 +1032,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="block text-[11px] text-[#A8AEB8]">Subtitle / Role</label>
+                  <label className="block text-[11px] text-[#A8AEB8]">Subheading / Role</label>
                   <input
                     type="text"
                     value={selectedClip.textOverlay.subtitle}
@@ -798,8 +1040,60 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                     className="w-full bg-[#0E0F12] border border-[#282B33] rounded px-2.5 py-1.5 text-[12px] text-white focus:outline-none focus:border-[#3B82F6]"
                   />
                 </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="block text-[11px] text-[#A8AEB8]">Font Style</label>
+                    <select
+                      aria-label="Text Font Style"
+                      value={selectedClip.textOverlay.fontFamily ?? 'sans'}
+                      onChange={(e) =>
+                        updateText({ fontFamily: e.target.value as TextFontFamily })
+                      }
+                      className="w-full bg-[#0E0F12] border border-[#282B33] rounded px-2 py-1 text-[11px] text-white"
+                    >
+                      <option value="sans">Modern Sans</option>
+                      <option value="serif">Editorial Serif</option>
+                      <option value="mono">Typewriter Mono</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[11px] text-[#A8AEB8]">Align</label>
+                    <select
+                      aria-label="Text Alignment"
+                      value={selectedClip.textOverlay.align}
+                      onChange={(e) =>
+                        updateText({ align: e.target.value as 'left' | 'center' | 'right' })
+                      }
+                      className="w-full bg-[#0E0F12] border border-[#282B33] rounded px-2 py-1 text-[11px] text-white"
+                    >
+                      <option value="left">Left</option>
+                      <option value="center">Center</option>
+                      <option value="right">Right</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="flex items-center justify-between bg-[#0E0F12] border border-[#282B33] rounded px-2 py-1 text-[11px] text-[#A8AEB8]">
+                    <span>Text Color</span>
+                    <input
+                      type="color"
+                      value={selectedClip.textOverlay.color}
+                      onChange={(e) => updateText({ color: e.target.value })}
+                      className="w-5 h-5 bg-transparent border-0 cursor-pointer"
+                    />
+                  </label>
+                  <label className="flex items-center justify-between bg-[#0E0F12] border border-[#282B33] rounded px-2 py-1 text-[11px] text-[#A8AEB8]">
+                    <span>Box Color</span>
+                    <input
+                      type="color"
+                      value={selectedClip.textOverlay.backgroundColor}
+                      onChange={(e) => updateText({ backgroundColor: e.target.value })}
+                      className="w-5 h-5 bg-transparent border-0 cursor-pointer"
+                    />
+                  </label>
+                </div>
                 <SliderRow
-                  label="Font Size"
+                  label="Text Size"
                   value={selectedClip.textOverlay.fontSize}
                   min={18}
                   max={84}
@@ -808,7 +1102,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   onChange={(v) => updateText({ fontSize: v })}
                 />
                 <SliderRow
-                  label="Backdrop Opacity"
+                  label="Box Opacity"
                   value={selectedClip.textOverlay.backgroundOpacity}
                   min={0}
                   max={100}
@@ -816,19 +1110,28 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   defaultValue={80}
                   onChange={(v) => updateText({ backgroundOpacity: v })}
                 />
-                <div className="flex items-center justify-between pt-1">
-                  <span className="text-[11px] text-[#A8AEB8]">Lower-Third Bar Layout</span>
+                <label className="flex items-center justify-between pt-1 cursor-pointer">
+                  <span className="text-[11px] text-[#A8AEB8]">Text Drop Shadow</span>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(selectedClip.textOverlay.textShadow)}
+                    onChange={(e) => updateText({ textShadow: e.target.checked })}
+                    className="accent-[#3B82F6] cursor-pointer"
+                  />
+                </label>
+                <label className="flex items-center justify-between pt-1 cursor-pointer">
+                  <span className="text-[11px] text-[#A8AEB8]">Lower-Third Side Bar</span>
                   <input
                     type="checkbox"
                     checked={selectedClip.textOverlay.lowerThird}
                     onChange={(e) => updateText({ lowerThird: e.target.checked })}
                     className="accent-[#3B82F6] cursor-pointer"
                   />
-                </div>
+                </label>
               </>
             ) : (
               <p className="text-[12px] text-[#6B7280]">
-                Select a Title clip on track V3 (or click &quot;Title&quot; in the Project Bin) to edit typography and lower-third graphics.
+                Select a Text clip on the timeline (or click &quot;+ Title&quot; / &quot;+ Caption&quot; in Media Library) to edit text styles.
               </p>
             )}
           </div>

@@ -15,9 +15,30 @@ export type LUTPresetId =
 
 export type BlendMode = 'source-over' | 'screen' | 'multiply' | 'overlay' | 'soft-light';
 
-export type TransitionType = 'none' | 'cross-dissolve' | 'dip-black' | 'wipe-left' | 'wipe-right';
+export type TransitionType =
+  | 'none'
+  | 'cross-dissolve'
+  | 'dip-black'
+  | 'fade-white'
+  | 'wipe-left'
+  | 'wipe-right'
+  | 'slide-left'
+  | 'slide-right'
+  | 'zoom-in';
+
+export type MotionPreset = 'none' | 'zoom-in' | 'zoom-out' | 'pan-left' | 'pan-right';
+
+export type PiPLayoutPreset = 'full' | 'pip-tr' | 'pip-tl' | 'split-left' | 'split-right';
 
 export type CropAspectPreset = 'original' | '16:9' | '4:3' | '1:1' | '4:5' | '9:16';
+
+export type SequenceAspectPreset = '16:9' | '9:16' | '1:1' | '4:5';
+
+export type AudioTonePreset = 'normal' | 'voice' | 'warm-bass' | 'radio';
+
+export type TextFontFamily = 'sans' | 'serif' | 'mono';
+
+export type TextStylePreset = 'hero' | 'lower-third' | 'caption' | 'tag';
 
 export interface CurvePoint {
   x: number; // 0..1
@@ -57,6 +78,14 @@ export interface ColorGrade {
   };
 }
 
+export interface ClipEffects {
+  blur: number; // 0..20 px
+  sepia: number; // 0..100 %
+  vintageFade: number; // 0..100 %
+  glow: number; // 0..100 %
+  cornerRadius: number; // 0..80 px
+}
+
 export interface ClipTransform {
   x: number; // px offset from center
   y: number; // px offset from center
@@ -69,6 +98,7 @@ export interface ClipTransform {
   cropBottom: number; // 0..50 %
   cropLeft: number; // 0..50 %
   kenBurnsZoom: number; // 0..30 % subtle motion for stills on timeline
+  motionPreset?: MotionPreset;
   flipH?: boolean;
   flipV?: boolean;
 }
@@ -78,12 +108,15 @@ export interface TextOverlay {
   subtitle: string;
   fontSize: number;
   fontWeight: 400 | 600 | 700;
+  fontFamily?: TextFontFamily;
   color: string;
   backgroundColor: string;
   backgroundOpacity: number; // 0..100
   align: 'left' | 'center' | 'right';
   letterSpacing: number;
   lowerThird: boolean;
+  textShadow?: boolean;
+  stylePreset?: TextStylePreset;
 }
 
 export interface MediaAsset {
@@ -112,6 +145,8 @@ export interface Track {
   locked: boolean;
   visible: boolean;
   gainDb: number; // -48..+12 dB for audio tracks
+  pan?: number; // -1..1 (Left to Right)
+  tonePreset?: AudioTonePreset;
 }
 
 export interface TimelineClip {
@@ -124,13 +159,16 @@ export interface TimelineClip {
   duration: number; // seconds on timeline
   sourceIn: number; // seconds into source asset
   speed: number; // 0.25..4
+  reversed?: boolean;
   fadeIn: number; // seconds
   fadeOut: number; // seconds
   transitionIn?: TransitionType;
   transitionOut?: TransitionType;
   transitionDuration?: number;
   gainDb: number; // -48..+12
+  audioTone?: AudioTonePreset;
   transform: ClipTransform;
+  effects?: ClipEffects;
   color: ColorGrade;
   textOverlay?: TextOverlay;
 }
@@ -149,6 +187,7 @@ export interface SequenceSettings {
   fps: number;
   inPoint: number | null;
   outPoint: number | null;
+  cinemaBars?: boolean;
 }
 
 export interface ScopeData {

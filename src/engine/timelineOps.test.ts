@@ -9,12 +9,19 @@ import {
 import {
   addTrack,
   changeClipSpeed,
+  closeTrackGaps,
+  splitAllAtTime,
   splitClipAtTime,
   moveClip,
+  nudgeClip,
   trimClip,
+  trimClipToPlayhead,
   deleteClip,
   getActiveClipsAtTime,
+  getPiPLayoutTransform,
+  getSequenceDimensionsForRatio,
 } from './timelineOps';
+import { DEFAULT_TRANSFORM } from './colorEngine';
 import { createSeedProject } from './seedProject';
 
 test('secondsToTimecode and timecodeToSeconds roundtrip accurately at 24fps', () => {
@@ -57,14 +64,39 @@ test('splitClipAtTime splits a clip into two contiguous clips preserving sourceI
   assert.equal(right.fadeIn, 0);
 });
 
+test('splitAllAtTime splits all unlocked tracks intersecting playhead', () => {
+  const project = createSeedProject();
+  const initialCount = project.clips.length;
+  // At 3.0s, clip_1 (v1), clip_audio_1 (a1), and clip_audio_2 (a2) all overlap
+  const after = splitAllAtTime(project.clips, project.tracks, 3.0);
+  assert.equal(after.length, initialCount + 3);
+});
+
+test('closeTrackGaps packs clips sequentially without empty gaps', () => {
+  const project = createSeedProject();
+  const moved = moveClip(project.clips, 'clip_2', 10.0, 'v1', project.tracks);
+  const packed = closeTrackGaps(moved, 'v1');
+  const v1 = packed.filter((c) => c.trackId === 'v1').sort((a, b) => a.startTime - b.startTime);
+  assert.equal(v1[0].startTime, 0);
+  assert.equal(v1[1].startTime, v1[0].duration);
+  assert.equal(v1[2].startTime, v1[0].duration + v1[1].duration);
+});
+
+test('trimClipToPlayhead and nudgeClip adjust clip bounds cleanly', () => {
+  const project = createSeedProject();
+  const trimmed = trimClipToPlayhead(project.clips, 'clip_1', 'right', 4.0);
+  assert.equal(trimmed.find((c) => c.id === 'clip_1')?.duration, 4.0);
+
+  const nudged = nudgeClip(trimmed, 'clip_2', 0.5, project.tracks);
+  assert.equal(nudged.find((c) => c.id === 'clip_2')?.startTime, 6.5);
+});
+
 test('moveClip enforces track type compatibility and track lock', () => {
   const project = createSeedProject();
-  // Moving video clip to another video track works
   const moved = moveClip(project.clips, 'clip_1', 1.0, 'v2', project.tracks);
   assert.equal(moved.find((c) => c.id === 'clip_1')?.trackId, 'v2');
   assert.equal(moved.find((c) => c.id === 'clip_1')?.startTime, 1.0);
 
-  // Moving video clip onto audio track preserves original video track
   const invalidTrack = moveClip(project.clips, 'clip_1', 2.0, 'a1', project.tracks);
   assert.equal(invalidTrack.find((c) => c.id === 'clip_1')?.trackId, 'v1');
 });
@@ -96,7 +128,6 @@ test('deleteClip with ripple shifts subsequent clips on the same track', () => {
 test('getActiveClipsAtTime respects track visibility and solo state', () => {
   const project = createSeedProject();
   const at7 = getActiveClipsAtTime(project.clips, project.tracks, 7.0);
-  // Both V1 portrait and V3 lower third should be active at 7.0s
   assert.equal(at7.videoClips.length, 2);
   assert.equal(at7.videoClips[0].id, 'clip_2');
   assert.equal(at7.videoClips[1].id, 'clip_title_1');
@@ -127,4 +158,19 @@ test('addTrack appends V4 at top or A3 at bottom cleanly', () => {
   assert.equal(withA3[withA3.length - 1].name, 'A3');
   assert.equal(withA3[withA3.length - 1].type, 'audio');
 });
+
+test('PiP layout presets and sequence aspect ratio helpers return accurate geometry', () => {
+  const splitL = getPiPLayoutTransform('split-left', DEFAULT_TRANSFORM);
+  assert.equal(splitL.cropLeft, 25);
+  assert.equal(splitL.cropRight, 25);
+  assert.equal(splitL.x, -320);
+
+  const pip = getPiPLayoutTransform('pip-tr', DEFAULT_TRANSFORM);
+  assert.equal(pip.scale, 34);
+
+  const vertical = getSequenceDimensionsForRatio('9:16');
+  assert.equal(vertical.width, 1080);
+  assert.equal(vertical.height, 1920);
+});
+
 
